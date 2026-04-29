@@ -1,0 +1,3257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Flight Plan Designer · TOLZ / Performance Area / Safety Buffer</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@turf/turf@7.1.0/turf.min.js"></script>
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+
+<style>
+  :root {
+    --bg-0: #0a0d12;
+    --bg-1: #11161e;
+    --bg-2: #1a212c;
+    --bg-3: #232c3a;
+    --line: #2a3445;
+    --text-0: #e6ecf5;
+    --text-1: #a0acbf;
+    --text-2: #5e6a7e;
+    --accent: #ff7a45;
+    --pa-color: #00ff00;
+    --tolz-color: #a020f0;
+    --buffer-color: #ef4444;
+    --audience-color: #fbbf24;
+    --primary-geofence: #3b82f6;
+    --secondary-geofence: #facc15;
+    --origin-color: #f97316;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-0);
+    color: var(--text-0);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+  }
+
+  #app {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    height: 100vh;
+    transition: grid-template-columns 0.25s ease;
+  }
+  #app.sidebar-collapsed {
+    grid-template-columns: 0 1fr;
+  }
+
+  aside {
+    background: var(--bg-1);
+    border-right: 1px solid var(--line);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    transition: opacity 0.2s, visibility 0.2s;
+  }
+  #app.sidebar-collapsed aside {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .sidebar-toggle {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 1002;
+    background: rgba(10, 13, 18, 0.92);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--line);
+    color: var(--text-0);
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1;
+    transition: all 0.15s;
+    padding: 0;
+  }
+  .sidebar-toggle:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .sidebar-toggle .icon {
+    transition: transform 0.25s ease;
+    display: inline-block;
+  }
+  #app.sidebar-collapsed .sidebar-toggle .icon {
+    transform: rotate(180deg);
+  }
+
+  /* Push Leaflet zoom controls below the sidebar toggle button */
+  .leaflet-top.leaflet-left {
+    top: 60px;
+  }
+
+  aside::-webkit-scrollbar { width: 8px; }
+  aside::-webkit-scrollbar-track { background: var(--bg-1); }
+  aside::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 4px; }
+
+  .header {
+    padding: 20px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%);
+  }
+
+  .header h1 {
+    font-family: 'Bricolage Grotesque', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 4px 0;
+    color: var(--text-0);
+  }
+
+  .header .sub {
+    font-size: 10px;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+
+  .team-avatars {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    min-height: 130px;
+  }
+  .team-avatars .avatar {
+    height: 130px;
+    width: auto;
+    display: block;
+    filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
+    transition: transform 0.2s ease, filter 0.2s ease;
+    cursor: default;
+  }
+  .team-avatars .avatar:hover {
+    transform: translateY(-4px);
+    filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.6));
+  }
+
+  .section {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .section-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-2);
+    margin: 0 0 12px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+
+  .input-row {
+    display: grid;
+    grid-template-columns: 1fr 70px 14px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .input-row label {
+    font-size: 12px;
+    color: var(--text-1);
+  }
+
+  .input-row input[type="number"] {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    color: var(--text-0);
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    text-align: right;
+    width: 100%;
+  }
+
+  .input-row input[type="number"]:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .unit {
+    color: var(--text-2);
+    font-size: 11px;
+    text-align: left;
+  }
+
+  .rotation-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .rotation-controls {
+    display: grid;
+    grid-template-columns: 1fr 60px 28px 28px;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .rotation-controls input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+
+  .rotation-controls input[type="number"] {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    color: var(--text-0);
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-align: right;
+  }
+
+  button.icon-btn {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    color: var(--text-1);
+    padding: 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    transition: all 0.15s;
+  }
+
+  button.icon-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .toggle-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .toggle-btn {
+    flex: 1;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    color: var(--text-1);
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.15s;
+  }
+
+  .toggle-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg-0);
+    font-weight: 700;
+  }
+
+  .toggle-btn:hover:not(.active) {
+    border-color: var(--text-2);
+    color: var(--text-0);
+  }
+
+  .actions {
+    padding: 16px 20px;
+    margin-top: auto;
+    border-top: 1px solid var(--line);
+    background: var(--bg-1);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .btn {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    color: var(--text-0);
+    padding: 10px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 500;
+    transition: all 0.15s;
+  }
+
+  .btn:hover {
+    border-color: var(--text-1);
+  }
+
+  .btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg-0);
+    font-weight: 700;
+  }
+
+  .btn.primary:hover {
+    background: #ff8e5e;
+  }
+
+  .readout {
+    padding: 12px 20px;
+    background: var(--bg-0);
+    border-bottom: 1px solid var(--line);
+    font-size: 10px;
+    color: var(--text-2);
+    line-height: 1.7;
+  }
+
+  .readout .row {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .readout .row span:last-child {
+    color: var(--text-0);
+  }
+
+  #map {
+    width: 100%;
+    height: 100%;
+    background: var(--bg-0);
+  }
+
+  .leaflet-container {
+    background: var(--bg-0);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .leaflet-control-attribution {
+    background: rgba(10, 13, 18, 0.8) !important;
+    color: var(--text-2) !important;
+    font-size: 9px !important;
+  }
+
+  .leaflet-control-attribution a {
+    color: var(--text-1) !important;
+  }
+
+  .audience-marker {
+    background: var(--audience-color);
+    border: 2px solid var(--bg-0);
+    border-radius: 50%;
+    width: 18px !important;
+    height: 18px !important;
+    margin-left: -9px !important;
+    margin-top: -9px !important;
+    box-shadow: 0 0 0 2px var(--audience-color), 0 4px 12px rgba(0,0,0,0.5);
+    cursor: move;
+  }
+
+  .search-pin-marker {
+    width: 24px !important;
+    height: 32px !important;
+    margin-left: -12px !important;
+    margin-top: -32px !important;
+    pointer-events: none;
+    filter: drop-shadow(0 3px 5px rgba(0,0,0,0.5));
+  }
+  .search-pin-marker svg {
+    width: 24px;
+    height: 32px;
+    display: block;
+  }
+
+  .center-marker {
+    background: rgba(255, 122, 69, 0.2);
+    border: 2px dashed var(--accent);
+    border-radius: 50%;
+    width: 24px !important;
+    height: 24px !important;
+    margin-left: -12px !important;
+    margin-top: -12px !important;
+    cursor: move;
+    pointer-events: auto;
+  }
+
+  .map-overlay {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(10, 13, 18, 0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--line);
+    padding: 10px 14px;
+    border-radius: 6px;
+    z-index: 1000;
+    font-size: 10px;
+    line-height: 1.6;
+    color: var(--text-1);
+    max-width: 280px;
+  }
+
+  .map-overlay strong {
+    color: var(--text-0);
+    font-weight: 700;
+  }
+
+  .map-overlay .kbd {
+    display: inline-block;
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--text-0);
+    font-size: 9px;
+  }
+
+  .toast {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--bg-2);
+    border: 1px solid var(--accent);
+    color: var(--text-0);
+    padding: 10px 18px;
+    border-radius: 4px;
+    font-size: 11px;
+    z-index: 2000;
+    opacity: 0;
+    transition: all 0.25s;
+    pointer-events: none;
+    max-width: 70%;
+    line-height: 1.5;
+    text-align: center;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .map-wrap {
+    position: relative;
+    height: 100%;
+  }
+
+  .vertex-marker {
+    background: var(--pa-color);
+    border: 2px solid var(--bg-0);
+    border-radius: 50%;
+    cursor: grab;
+    width: 12px !important;
+    height: 12px !important;
+    margin-left: -6px !important;
+    margin-top: -6px !important;
+    box-shadow: 0 0 0 1px var(--pa-color), 0 1px 4px rgba(0, 0, 0, 0.5);
+    transition: transform 0.12s;
+  }
+  .vertex-marker:hover {
+    transform: scale(1.4);
+  }
+  .vertex-marker:active {
+    cursor: grabbing;
+  }
+
+  .midpoint-marker {
+    background: rgba(52, 211, 153, 0.25);
+    border: 1.5px dashed var(--pa-color);
+    border-radius: 50%;
+    cursor: copy;
+    width: 10px !important;
+    height: 10px !important;
+    margin-left: -5px !important;
+    margin-top: -5px !important;
+    transition: all 0.12s;
+  }
+  .midpoint-marker:hover {
+    background: var(--pa-color);
+    border-style: solid;
+    transform: scale(1.5);
+  }
+
+  .input-row input[type="number"]:disabled,
+  .toggle-btn:disabled,
+  input[type="range"]:disabled,
+  button.icon-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  .btn-reset-pa {
+    display: none;
+    width: 100%;
+    margin-top: 10px;
+    background: var(--bg-2);
+    border: 1px dashed var(--pa-color);
+    color: var(--pa-color);
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 500;
+    transition: all 0.15s;
+  }
+  .btn-reset-pa.visible {
+    display: block;
+  }
+  .btn-reset-pa:hover {
+    background: var(--pa-color);
+    color: var(--bg-0);
+  }
+
+  .reset-btn {
+    display: none;
+    width: 100%;
+    margin-top: 8px;
+    background: var(--bg-2);
+    border: 1px dashed var(--text-2);
+    color: var(--text-2);
+    padding: 5px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 500;
+    transition: all 0.15s;
+  }
+  .reset-btn.visible {
+    display: block;
+  }
+  #btn-reset-primary-gf.visible {
+    border-color: var(--primary-geofence);
+    color: var(--primary-geofence);
+  }
+  #btn-reset-secondary-gf.visible {
+    border-color: var(--secondary-geofence);
+    color: var(--secondary-geofence);
+  }
+  .reset-btn:hover {
+    background: var(--text-2);
+    color: var(--bg-0);
+  }
+
+  .map-wrap.drawing-mode #map,
+  .map-wrap.drawing-mode .leaflet-grab,
+  .map-wrap.drawing-mode .leaflet-interactive {
+    cursor: crosshair !important;
+  }
+
+  .help-text {
+    font-size: 10px;
+    color: var(--text-2);
+    line-height: 1.5;
+    margin-top: 8px;
+  }
+
+  .vertex-readout {
+    margin-top: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    line-height: 1.55;
+    color: var(--text-1);
+  }
+  .vertex-readout:empty {
+    display: none;
+  }
+  .vertex-readout .gf-section {
+    margin-bottom: 10px;
+  }
+  .vertex-readout .gf-section:last-child {
+    margin-bottom: 0;
+  }
+  .vertex-readout .gf-label {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 9px;
+    color: var(--text-2);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .vertex-readout .gf-label .swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .vertex-readout .vertex-line {
+    color: var(--text-0);
+    padding: 1px 0;
+    word-break: break-word;
+  }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+    padding: 6px 0;
+    font-size: 12px;
+    color: var(--text-0);
+  }
+  .checkbox-row input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--line);
+    border-radius: 3px;
+    background: var(--bg-2);
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .checkbox-row input[type="checkbox"]:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .checkbox-row input[type="checkbox"]:checked::after {
+    content: '✓';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--bg-0);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .checkbox-row .checkbox-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .nested-inputs {
+    margin-left: 26px;
+    margin-top: 4px;
+    margin-bottom: 8px;
+    opacity: 0.4;
+    transition: opacity 0.15s;
+    pointer-events: none;
+  }
+  .nested-inputs.enabled {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .origin-input-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .origin-input-row input[type="text"] {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    color: var(--text-0);
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    outline: none;
+  }
+  .origin-input-row input[type="text"]:focus {
+    border-color: var(--accent);
+  }
+  .origin-input-row button {
+    background: var(--bg-2);
+    border: 1px solid var(--origin-color);
+    color: var(--origin-color);
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    transition: all 0.15s;
+  }
+  .origin-input-row button:hover {
+    background: var(--origin-color);
+    color: var(--bg-0);
+  }
+
+  .origin-marker {
+    width: 18px !important;
+    height: 18px !important;
+    margin-left: -9px !important;
+    margin-top: -9px !important;
+    background: var(--origin-color);
+    border: 2px solid var(--bg-0);
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--origin-color), 0 4px 10px rgba(0,0,0,0.5);
+    cursor: move;
+  }
+  .origin-marker::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 6px;
+    height: 6px;
+    background: var(--bg-0);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .coord-search {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1001;
+    display: flex;
+    align-items: stretch;
+    background: rgba(10, 13, 18, 0.92);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  }
+  .coord-search input {
+    background: transparent;
+    border: none;
+    color: var(--text-0);
+    padding: 9px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    width: 280px;
+    outline: none;
+    letter-spacing: 0.02em;
+  }
+  .coord-search input::placeholder {
+    color: var(--text-2);
+  }
+  .coord-search button {
+    background: var(--accent);
+    border: none;
+    color: var(--bg-0);
+    padding: 0 18px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    transition: background 0.15s;
+  }
+  .coord-search button:hover {
+    background: #ff8e5e;
+  }
+  .coord-search #coord-clear {
+    background: transparent;
+    color: var(--text-2);
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 400;
+    border-right: 1px solid var(--line);
+    letter-spacing: 0;
+  }
+  .coord-search #coord-clear:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+  }
+
+  .launch-btn {
+    position: absolute;
+    top: 64px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1001;
+    background: var(--pa-color);
+    border: none;
+    color: var(--bg-0);
+    padding: 12px 28px;
+    border-radius: 6px;
+    font-family: 'Bricolage Grotesque', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(52, 211, 153, 0.45), 0 0 0 1px rgba(52, 211, 153, 0.3);
+    transition: all 0.18s;
+    animation: pulseLaunch 2.4s ease-in-out infinite;
+  }
+  .launch-btn:hover {
+    background: #4ade80;
+    transform: translateX(-50%) translateY(-1px);
+    box-shadow: 0 8px 22px rgba(52, 211, 153, 0.55), 0 0 0 1px rgba(52, 211, 153, 0.5);
+    animation: none;
+  }
+  .launch-btn:active {
+    transform: translateX(-50%) translateY(0);
+  }
+  .launch-btn.hidden {
+    display: none;
+  }
+  @keyframes pulseLaunch {
+    0%, 100% { box-shadow: 0 6px 18px rgba(52, 211, 153, 0.45), 0 0 0 1px rgba(52, 211, 153, 0.3); }
+    50% { box-shadow: 0 6px 24px rgba(52, 211, 153, 0.7), 0 0 0 4px rgba(52, 211, 153, 0.15); }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <aside>
+    <div class="header">
+      <div class="team-avatars">
+        <img src="data:image/webp;base64,UklGRtA8AABXRUJQVlA4WAoAAAAQAAAAjwAA2wAAQUxQSF0uAAAB/yckSPD/eGtEpO4TEAOwbdsQIFWFBfH/wWbGCRH9n4BYx2PHp5kQPsu0B7bfdds2ZlDh14N9HgDqbufkzDxgmxGv/8nMXMqOCE9+AExExC/0Hfd33GojAEYE1wcA/QbnC9wQ327602cNSpqlQIBYSJok9iNd7ltL0lIbm6LMa1ZVAd3Ne+U5dhUu7W7paHw8VQCQLTXJ4fU8MiUleYZVtgfn6OTLNMm615ru031lS4O6HowGgMxg0DaSo4Q/7Nn2BUBETAClyVhl4cohOKHWit4DGp75fXfqSL3IFeoES3qVwlELhmNQ3CIscIhEz0HZoQLiC9u2tW2tbTuuW5LZoYbKMKg8mZmZGZcfZmZmZmZmfp7Jcz6DO7gMKaRpOE4csy3rvhbspJIir0fEBHDa/0+RJEnS7y+iIspmauDmHJxRmcU4zIwnntvMbea28wJ238CemJlOzLzb3F3YVJlZyREezmZupCiqIvI/FA3VPSImgB2sFgePnh3vf+3DpRSWgrG/06F1PUCMX7gETv7C3/vbT4+n5+ob3Qcf1vNemY0Kj976Bj7eM37xMvLnfzj6YK2wSG5mf+L7q3nthlLlu9EQfGFod6BfIMTQUFkx8YmLMnXFVNVH8UP60Hypwu56tXwYPXFsfmEIHH19Eq5rdWgHyqX/bHn85N70JJpy/3zaNn0f4E1yGlWDQcB5cvjJTZTNW2s/3KTpPNmtbDLlXRna6q6ehHmeF9WmOcm9gYAcef32zXVL0dUuwpkqRzOhs+vyifrMxJb0upHp9OTk2dZ82OZMWpJv96s+9Mkb4ABirKRoyb6V6nqXnszimwseglOVAEH9+ZNPLTrEAUm4/WbokU+nInlOm+1S+gUofuqMOV4onbm0Ox6tTiepHOHd288PLNP0OpJk2XjD2ez8uP/MT2aQYwXsu7A229EJPTufT+bxfNs8lyxO4vWwNn0ksQSdi6//gccXd3/UPJQisN3oZOdptzk0cH3UqT4h4+PPfe74pNlH85N4+A57fRI88MHr7cu/cdjWw8hXob++efNHw0iMhap0TEPnQjs+3xwdFHqQq5Ni2Iy7SSY4KvmDOvrWafB7/VtYpXPhRfo4AjFYB124Oi+DRRS94pnoRPZHvvZb07uKma2chBGFvC/P42T77U/rs4D3e31wGHMjiPATA+fsX5XBd/Nv3m2uDs6q+CVOpm+cHk1tJQmjHH/xuBzEeRiWvj512zubIlXhB2/OtTdn51svOKG1f/kNffbBsM2j73x8+EY8k9/68nvuP7xVoopy71ve9sE3njoS8u2Fv78tNjWh7uPFs8fvvfvJa6x7N/Z+/evSs/ju5WkZFe6Db78f/NrNF5+f+5Nv+XAe2YYkBTR7+vzRi6/9if/4R2912zJPd31P8cFJ+frVp296/Ljo/k+/3KnfXK3C4sF8/urX2svvffStfK6Wzd3aTkIKhcfNp1+eExYPc/9LWUTybpGtZJ5U77+7SVJIshbg1Ck7LO7a4wmrx7eb2P/ww3tTbXdksyoJgzvxuYPd+e6Xdq+mL18ZPs3f5I5GYp3ciNPxbpJ+zBivMDyy1mgiVfXLwly6x4vGmfdlX66zkS8nzfFT4587EtGj//NXPnx0O5wFsiyykkvrTDbp+/npAm+KlUJwXM9faoKOu4+WV01E05Gp2lsy5q5WufvUDhLIvfD+EWfr1ydZ9DF3PB0t8+QqN7J5/a6YxEfPdsHfmS9n9+SOzP3zf5nOQOh7P9psbRg8dbZOUG2EIKmsi9kpLzlILjeOBjwH7vs4mYVd1Ci3m155vuIoSw/pey9PTKaBr/6+25cwzBPhsDzQt9Yt3/ZThDm8d6/LTpSAzmSh2lq4vQ+Hgy9FPPVtPgeol3ZviAn9/vLm4IAnXzahtnvhv6/90IGDnhZg5wzhtMqEaGTo0Ms++1ojEjcxni7MPL5y5+b4T31xMv/mV98S/NXJ9mEQW4rf2PohAo0u6jhW3fRbdueCp58SYl+TmDwpy+P4qozmxTSizbsTb+rw6d+5+BFM7Nwf/PMfNPMnwU28OR/vX3zjfvJo2G9iUaldsrDDwhZJ8fQQdayvjOanvXsK20chXjF8kRgje+/Z3PU/F56O6v6rf+vi12JGLP4M+u3VrS4nNnm2/Dv5/32a3j20szZOunBxpmKav9gpAdtHYotLfnqkbDp2ebuM0jAdNi0JtlRe143cjag4E7tv/PkfYmLFO95/vDIffaZhT+bxn/rRe1ps6srsqlQmffvo+F31oU43x0A/mQqmbLyvpo/VXRnMz7LlBR8kSMKyLm9fv2/uhmZ0Or1Z5v9wWiU+ROLZR+8taluQrhePWgS/9O3nP9rn/ZFJHlaPcn9ffR2f2qfZ7ve7m3f+yFhM1M7Hp1OrpB8nbbmkdCLam03Gm++/OjnqINvKMmQ5wj/6/IpKbDDMc3X4yMeH/avlX/j/v3N4y/VQQ3hETuXutHTjMH4nuBvW9XDy186TYBTH+dQOsRsUgHye+Q64/X4esr962cgQ6DbcR8lN87p7FBTzxJbgjusyqS7yQ7P+sPnf/e0mPnjzrNqoxEwSfVU8C9M6OMqPa/clfvn2ozyMQgkA4YjBAGKpmUG9EBCvbrddPLYzzfsuergxmdFsEJvt4/byN3/56qLcLMsP/78XTW/7aHY6uu1O+CGTeRRFNaWa1PEX1NHxbO4UnAAIkADhJxJ+crM+016qppvbYN8cI1L3tS2eGEJiIbw91fuP3v393/2V3/j2xZu1TI6CHTDBrFwzp/ogaTnNXePaRT49djwD4CT+SRvl3rNv2rm5hXjew+E8PMzbUsrlfVkkDow/UzyS01Np4tM4ZsQnbiXJvK6Sw/Yh4mE968OsG3LaHpLJ/GYwKX5KJTQw08cPbiw7AgIYRySztyI5SmN/PcgGFB1x8XZ52TQddKq7uy06rCtJJRav/ZEsZcwstfVpzjs9lFXygAqRKtmGK4GYALCBvB/9MXEeXggRn2Di/1nANyc3n2yGHqqF9pl+6ButI5NQOvheIwkfZpP68PmuiSyx1bJ3a2HyUNMHHNfvv/U4V5+Nw9UufUuRRObl83dXgQO1tDFoRCcoEWGmuz5BhET4NDp9NC0CJ21B4iL1L9w4eHKv1H2IjpaP336wqd/v3mxJriMTjNrX95Y2y88av23NXcPsLKC2E3nCTCHsO8/TWgmDiBBXoeOOvPB53uIGyEk0yyCKbH2/27XP10hkWjo8OFcWsbHGB/Ur6SvrxSI/MOuso8XpV4TPFGIu3Ky1Ruo1Z13xJvrC4NMXdAH2xcsaExE02+12TGOZJl4QYmyLR5077f3TQvsnj6j5YjhohX/WVS+vTl+Z389Kej/6Y+XVcf7BcrU1Ybq+FyIW7vflVLfr9T3JqrYso8mUMH/78XGj3zqEy07ARP/MIW0JSovVtc5UX/zV91eTlx//8BXilX2486IiyTg79FUhOunSUPD6zNiRrF/eeAv15WHN7W4HeOzIZ8FqqTOsffvAi2Wi+GEN1yuZRiIRmaSiSMX4kEWk02TQ7Ycn91SPv7OODu3vAhl2Kk3L+y7NVv3q/S90a3t03+1NtRm9mCBiI7VjhzhoEqWsaDA5a9K3po+gJs3OZmyWq3knxgO3XbhVF0EaoJOne5AohBedBXVL5rUanBgQOWPSu6fXsBh2PJ2wDJdZbM2OA3OV9mXYPWcxRbTmo8FO02IRZd3+bNAx6+aQU/FF2PmE6fSTQePKxatmJgwNq6Dr0yKNRiDs+ZG364GDdvy2uK0Pj11tr9ZuLZKQ9AgrNLu67dzb97/3sqh3zfpgvEmUhtO/MumaiN+VwU4Hz7/S7cazq+urQUIwndYPG7G5mzxubwOXtX1aN8kaEsk7f39rk9iIo0mtz//gOfucUulKOyGIp+J92fHWfPFuK8Kl0qFflgtoBKIvPPWxKtTW/eG/3N5Oqv8mPvzqGLkATQZU1r86e8PPDz9reil342AfthcekWoao2oKzv7g84VW/cPi8eVqIYeQnLX5D0NdDskwtHHkfKLviVRQ12hVDY/p/S8n3MyOrycBCXv1Qt7xkTvu9+h3R6moo7JpiGL15qas6Li/DF30HE0UlSvzrp90rUyts6oY8E8JXFwTPR5+49q0I7d9Yb/SJwzSvLx7orQ2VgRh2DC1UaXGcqWXd6q8O9qtXvwVy0haZdoe2VaE/W6Vjhw6FVV6GoGo1AmLsosm7uvtv3CQ43kkdIB+HLVSE9moFPdAcjzhoAmijf06/gUcLkw4np4edvtBqIBaJBqvvn86HDt6z9x8aJ4ymkBAb20Qt5uty5nue6LO12Ju25sno2xzIUViMwv/yO0liYddVCZ/cOdoffnO8dEXbJDkTKE7+Jj6fI9EI6PTYLjdvThIRw4iyZb19wVAfVQ8LykvHo6+ZCZpEp7Dsj5gVVxFdnwpUivaKVSTjuiBpNgR0YpePP9CKtmeQ0g6vH13ZdQNJCKqc61zrfEvfsbCXbpt+08vLWfrZf6U/8UHY7mL7hLRy0efAxYZOPnU21feXEKiEvoyzWTndPLBkNzuoNGtuzRGV/AgaKXyNWK4/d7Tt2yEXwgmvS5xwEfxs5oCDMJUfgHRGEA5F+EXoGhlqmOJIwfbsfxFoKawaYjHnZlXVfYOAAgcYlreWKkyAIVq0VhjXBOV6JK7WUWTDwolx/gKJhox1jqqDEQ7n+XECz+7H4nCEIAYGQQqqzOv+InXo8uvwoQnjByopHJ+BhkEo+b0aQ06erMgEpbh/XOTD3252vIZiPmjrwuMq76+Dyckw3RFeeMn/0Fqg0DYOA2gvv1Z3NDeWvTVHt3X8gYBuMMqADKFhgRDKoJ5496pwZAaQgUMz8eGlhUwHL4nPxh2ZemfRkNz6XssQJJPGBGkjwgSVrqP7A2UQThCDAt9CAIGoqrpFygaVr1H2bwiGoXGSFVAwhOhV2kghH0RASE1SaQSo6itdfs9ihOS5cG6o8DoA0gE3XKMNs8d8DYjUKTH8D9oWLLwFBbAKKE3//m/bmDjodL6+4sfzf4jGlp/a+48iA0Jh8+hPR5hK/XqWeWOxuTOf2c/vL7WEo1Iv9h0NCzlETU9joQFvKE11XiwisYAGleuvuvSvatEbOTPCd9yuWqUiA9+YOFfnQwSC7hx9eooEaqANfNPYEMD3ydyPbXr+CtdYhqUcyt7xiLoDbhRNxpBox2dlXtecMDERRGO5ZFIujyHIUILGpWTViXWSsRdVojS8KXoQCReMVyKxOWv4pCwhvNoJN/HgFVTvx3Rh5ABw+xSJIbnqzNYLM8EThRC+hYWAh0Y8DBClIYbKDTtoFCn+zVsJC4PoUq3OTDMtcsROTyEgW53UFi+aF0iutgy4DmDAuaIVoSPZRS0jQ4GoRSN4H545ftF8QMGph+JIfd17/vrp4BMYXB00PAMox9/vjHrGAodK4NBuE34DuPfdR/GtiwqWQak4IclxjD0x+/COAQAGTMgQEIRQwD/0X9Uf8cCLK0qg9PKS5aMvRuDhfwD/8o/uPyd3jNM+XPSHRgq/MrnrMj2RBl/07E3pya/f7EuQw/kt9peVweCCjNXRlsrNcy29LVv/+xe+9yFGzXmDgzVuR/fcKU0CPCfejA3475ofKmFyFa/8SEpXr24vPRRcJiRAXSo+Tvv+Y3/nkUTL5h7eqag58+NvvGkljogIj3v2lxuXyhZKT01bAFGhrnwO3+/SNKrzDzcyub8cyvBnByeaFt6Rah0Ly/Obub2TnkdKTCKhbQRqdSsJN7nZ7w0xj2dWVhccmtM7T940AFs5epcqZLOd1EXbwx4PGi73YXOjRk02eCfLrUnskWGMvni6HRm4n0f+6XfePvY+NTK7OuGZF1V5mIPUBHYmGqXVpCEG7rW700Up4AuztQJGaf1mvW5y5/CkojGOJCrWwlytYhiGX27VpKdyQQisRQFh6JzYrTxblo1v/tljQtPHObprs2l8eBwuZGD53a5Xk82+J0KnBjl6lxX4HjpBIakktKr0T6cKjdTDcCENKz0dtdQ7dfQRDPbNLkpVAWJhoiGAKWhrm6SYA9HUoLx44W7G0Lwp2VDsrdB97rZOXBaWADe02uNNFUu9cJX9c5LMEx3Nngtbe9kEs7ay9JUlkCEmJm5D1hvhzxLHAY9T0AYmQcFZp/vziIx0R1iNne1ZACwiIGqEiUlim399nxkAbF/VRGrIhoki0A+3JpH4zFX2RGMut84wgA4yzpVuzvHkDeaSe96AQ9m72oGAp0cB14o/aNrrpU4KEFqRxCEs4mH8WCVDm2gnI3YkJ8GCmOqpqQDEgCkYOclWGzPWiFM3Y72CLvNTmB0l8SeiAiCrdxDBwARkbPTSOVRMCszAkBn4UAuld5mK8tiw9i29EA6vROAqgtD0okj0PAwlWGTMmCZyj0RmAn7jSVwUFRG4MeLuWcIVbazw+s78/z3O8LP68ej26Y8zLNh2adgACJNTdd3DOeVkDBirtKjYRA4ul4hNmxDK0ITD5J/TOwy2kRWqcZT0jSADMehE+MIsPlqiQR3NglKDlzVzBULTyAWDPYitE3BxLFd+aEHkt1FY4VUIOtfOms1GWwofqwr5zw1EE7C90ioU4jg1bbXQ28U6eUQADm1Qon9QNiWbpxz2NGK9BEJRS0+/L63YJ7E+9Amg3VaZ57gKrPvIvZAOtEMTJ49n+YxMQid8rNt0QgUiUqECBmvLywcAO+EbeNaVPkspNpO9se7/mmzt7Q4ThnQg21qqAacBrNXGuxcVTO/joYHbK5KxQDIKeQ7kJCtn9qhK+6bWea7Peo1eoC99/hxDlxu3whPufmPb9ylEgEE/zNPlH4r41BX+KnkMrkdwXsmx0DW5MnVECvIUXaUeWcGx00zU7oSgSx8bvJ9DhFeGB0/KBEwrT89aRrLP0YG2TYOVCaqMZQ1uNucZRx4pw7BVDYg9o7ZBbS/0hUNCWhtHvOMoCG1boyazEgEZK8/faj78QRrBkQyWlhPCnbDkVuj6/1o4DjKciRBWVrhXKhkkDL853+ti4YGdEgRstYKsnRgn0pofPu9thrM7SFp74XIDqvSsRrIeUMx5HS6u3a6g0TiWQDWq36ee467/HhVJTSh98nmsbsLxFiDyiGE0O3HP4pgEzSkXZ2kYTBgaquIQ+rAQPPor9N/vrotc9idEMTsfbA3gpjHZohWZf5cqmnvRoW+SuiM6nIIrZ4MxnrRc5HsfVCp0Ermoa3Fv/QT3xl857vi2xaDTtNcetf0exuwxivzxxKNordBVqDjOFtFL2IKrZJoT1KVxOmIxrwiBL7JYNOwUzoXvvoD//+mLxMDY4G8mE5CBhFIbuu3TohW1QBoNZWJD7JRWraBW914nXc9wMazL/KAJ/G6Mjc5pv/so1OP8ue1gHLdcojj0gEsbA8k4lQ0ElAh9tK+3Qg6MooGKyeirozysXR7r3FvyOwNy1e62ZcwPxpFuy1ay751WgEDMy4Wx5sSUfzVLD9XzrUDVQgmI8FpEHsvA2aG3wJJbFPl/xz3JsgmoXRDPA3SLE+0TqGcDcqPn96sJ4vC5/5z05qUByc1mkFLN3g3OKWlq4xOw5Hde97aSk3yg3oagPVEZmnuVYhYUc2ocveGnyzSevpSs5HNuFLAlyRNlRvA9lnodjVFhSt27j+UPZhm2eYKgp1wTLo3YvAOCAI0680kUVk8dwlUxOrMtiIL73hmAQjyD1vKeIHMcLPZ8Zu8Vd8MCJhiF4wDIZxtrSAbiY3xTKLY33j0Tj7nd10dKgZanuqHAPAjMSBVpMJhOsvW0Yox1QyUzgNgOZ1OJ/MA9c2NfSnV5BDTt998pQjzEVl6RZTxUz3gk6IajdXr0ec0hsQNGIIJRiGctV0rXbRWqqXVGtL1k4Ka11VpvW2dhHYB47TyRQ2ivYj6sUkOT3S5340uyxQEchAOCAV760xHXFDjnzmD2uVOMlAjz35v0ifSOM/WAiIOY4q9G1HjJCnHT1d0EKXPIkyLJkSlA7+1iSaM8yoIqYmNryGdjaVmAhAlD2HaBXKie6ekmB51ojCDNjmXvaE0kFKOfRn7Hum50FjVYeKlVoJ4xC+jNEuNeUtm5fxsZ+cxbHR66o/POaM7o9JZC9Y6kYRQCjZqe52m7Ofuh95sOrCaTtCv4kmR6cD2tU4UQdhotHzc1xxZmNcdJ64+u2r+3J83sIMKjB/qiKMuhgVZJibnA2pxP9zLp8GD9yCpR3A7BgWnh7wPN6UgQL043oLUUedma4cx3b6y4dRPyqY2c+1jLzAOeTcQkV6ycqLnhFfXaAnuk0RIoOC1AABRdZNiWq6ulRUwzbUAlJdO3txRbojGHzOG9ONPxiHAdD2dPLzWcVB+Zhe9uazOeddjbwBhyklwedfRiHu49JA6gLFZKJVRIZsu7NkpDKBb3h3e1X1TTEfx0WHuHxXN7iH2JBhpXjXrfihZVlj/VpNykGxe+Rp4qrLKWmafFWky0kE6kgD6auUaCqAjeVodbcfPOnjU7+X6spKukhhlFcLJLOgkeeYkbLyLu4bZ4ez//d//ajyYnLdaAGejZ3nAD0FEYrSIZRiMZxKE5sZ5+jtDwZm11O1y3LpmfbsU2/ebI0oPg5rGkHDDwcQMex+Hzrt9HybWIszr7XKdRlF1/eHHb/ZAUEVPs+5393mmimkoIicyAqN++xqmD/rM/+Xz5WUbr9b3f/DdVx9/3NW7xAddwy4fWO23ScC2dBPBnR2M7rT2MqAP34ufI/N1vVVdj6M/qMLFWbz1+XQ8PUmdhFWCiOLiqmgf1st5f7HaDeKkZ+4rMSsqERnvZ0H8MnGBFF3ZCubASlbCQ/gSIXXl9oev3B5y1vJlZnYQb5X+9LEqTUN+9uQ0HIVyrCWrnr2E7YcrTX95vorGReXiU6h270VvaZ4qGoWYjpJQFWOYxEF3yk1FzwI5pGgWu9XgK8zFdRs+KMWYRvOxZwkG2GWzosgZAM21f1Tpp7RTvp1dJb7t/1ndDdubA3G7N+vT3I81C4ABeIABMAOAtV647Z4RTnE2dvCTuGVEhweBCpFOkgxFqnQkjWHgy79eM7YPBMWDy6uzNdF4KGtfrge7B5vVdBCrWXcbhYWxxHmx303M5uS0sn7bE4ZEjkeXm3XDF9il99h/qTaEk9m0EJAvJ0bmmfWS3JKVA6YfYpuOfZcms/CfDULqbpaNlfNULCjId3eRR1uFzEKm+SToMPKeK1E1JqJQATH0OcB5GfzG5K+AF1/isosPijoKPdBoWG48UKfyl1XRLcBq/hyppDiAxrouxvqL8/r7r+r9Y/UmQTR/HA4RmCWReYj1RIJlYCOV7CubvL2PEaQHV4M/zj3jm8QHcU+z8pHzwaA8TNMBypuP/qVY2YJ4/yTsHSMxEB/HJg6Px/PFxCzbs4POkBDoRQ8OKn0+PTTq5IEPZMjOrx+MxdFy2Ym5Xb7Zv5Q7gSTLCm0ejibQRdioqCsbBxG6hT9aFbMF0I1vH0Y3N4Po5Pu/7J10h3wweVq9GSdBJAhCZomBHhMO92KgOOy3kEm3/qFWktqZa6Nhv6cmEAwk4fhO8C6fmt0oqPTo7o1PBpR1u/JrRmUrrL43fb69lrU2EiWK04OjQy4oWN+b1/dqKVRGPsoCPRWTR8XVSGq+vZ/wgxyF/adLlUXZ/jio1kdqbdfyDw3ARMXzbT0bpkf7uhsnZruaH+xyHqjzV+fYBvPtsbqcf0lBTBQ8fPuT4zQZtzEfXNa8bfuHoVU0eAYYvjmU11HWJb3T2sXt8i6arGncFMt347Exl1zJVxVUrotouqAsGkX1GJNdCvihcahNTv/gEZUtQOZgIhm2WRfVkFTufOc2ObteOUFyIVicLtS650GMAu6HmB/WsV53MQ3aiphh3muES83hbb/6n6tAz7vXt0gk4/yheHTTLgLMRBCH99JZ27WHx6T77ObFA3krWwA6m3iVXbtdEFG9O0U6/7VC/vlYBZ6qy8OmS7FLGbbV0sfh3nvlNEo37P2upKq7u9GuPrhzeVn9ZqsUaT3sqfB0uBVizaPBDKSAHabZlrUPjHX3X3Sez7ZN9q6RsxxNqIl+PiLUOu0GJG+lzcO3K7/mI1GdpbKwRhJAUdlwVJyV1UFc8nbgfRfn235U5oo9Rdog2/fbI8IL9QlQhuOYUtHXnDybYezvkdrOViO1+7YFm5rn5faatyto+fOUbZbtM7TNJPf7NFt+7zPMkm7ZYyo7CUuhH27vFzTp7yB5e6tbyy4Y6mlMkxgIU6fca8LN0yAZNxTVKsuiGNS6pLTFMChzzRIb47vT2+pcLKAvbr3bX13Kguhnqt+rJsXGpjUN8eJdNWv0YmiTedmVTngBAljnY0EmO9j5gxdxf0+uM2RqcIbaKAy7ZtZfjzTkox5hkCS6b1g4x+z7hPfygHeOzZ6lQyPIVn5d2PtmI/bRUaItlNgG90voemtVdP6Idrf5PNJJdeWLmTK1ABO8wnja3nscRCEWB8Py4DyTiniLA9S0DVycG9NfTAum2S6pSn4rtAw9DAKQQ9dz7GFYRk25MIJuAcCGLzqRnc83vrmKt9EmUbnf3O3P/hLg/yeq211e8KbOZ/PFBABICrBjScwAXIR2kNaCQaByu3JCS4rWtWowwiQ4UGYdXqtZWw3TvJfRMCjf+dYBfO/eFznIFkxAWTkko66ezfDQ3IJvTnCYtZf6MHHi/wmKT39UzGPpPYmhtOyk9dyLoPFR7Jpxpt/IUWuUcRQYcRjk9CcQSuLUrX3swUo2X5k19ztTqGubxXlACr2SFEs46FjenjmHap8fv7FRP9iNDttxcnGu6zcsUCWO5TU9/3zogzevo9c31yePd+UMPtBe0CBBEh6J7stwXAJdEOwoJzC8F0597V9WJMNR3xmRWADjh+cvJOa6SsfHjfejvY8CS3EstFiyWnXqqzi61X74EFOqteZcZnOO54FStpJNrs5jwPxm3P1W/pTDzTbjZrBhOigbcI8MSWh6bCkZRKQRKN8i0JmY7v7qU2nc0ZZJYjJToPR+ciDz+YSdpnyA4VBJuNhQt1wxbJpm1WcGzD8J+4XcF9xqXEi+7NzvgjVQKU05aWAO596P0z/89tvdJ0FarPshF4O2iOWgqIFx/TZw6vkf4yAEFLVBzDr7FkOb4l4kuH8SjYBw83HZ5MdHrGProqguIm8ROuv6iwdByILJZPHmFpJ/EgS+3s1i6S7tAQdVkHI+BapAWZXD/e+6/skomuSzwMmOlBUw5BJhnWe/M8Y8Oxp6gENhwFq8OCWKgjJu8yZInxFYqE8WxclxnzzmdJlyQoKBCC3FLTvLaPfxWfI7v1JCWNMHYHvhDji0mXRWUUzXBVQwovksi2rt7tvERRIsS8S9Yj9vgUKlkFz96EHebBSDjI9YZIuCAOi7ZwTcv46fZMSHVDx/rFfhZH5jhZcAQJ5GyCLRWwK6YH3tb/+bX/UGK9LHtaXomvF66z6HLa2xd7edinyC1Xu/w5GJYgAEBogYAPsge/FUVXFWuRAAgYmoV4LBkXYC5u7j+vNFlwVh9URLMYorNwjhCWHUbRCOhqbtN8wgXK3T5+f0K+96tYCqgPDzq5rSP2fxk5t37zfVzVWQ24ZHAQMAJ5IHNpO4bslDRWr2XpIlbSxZpnGQfBk/HtZloLt7sf7+8tHz5INxKMKC9rBRUMuAXDBiHzhnN22EH6ddenju9c2v37XbAYAZACFbKMLlf1+x+cuyajarq7FiNKvGih/zTPDeUrOqomb07Fzih3tPjpghRTg4EEA75DvDB735fPvfv/Pl3+qiwBOmqHc8VaUfpZ7yenBi/KxoATAGe73SplwvHn3h5Ng4xE9WAQWBxpl/rR9s15/ecXW3uXiWa9ICcgDzkI/axEbge92vVx9uMP/YHgCxShLa8pmvwXAZI2lK//LtcaeLX33nP9oUDvYGYyHC26yAwFpErYbOcfOaCADZ/XI1nK0Or7mO+zh8WswVR/kCikBn6c6DDxZP+uy+cx3PROXjeeeDSLGLYkfAuBUjvwoDVbdLSdsHWQuhVaw1rfeTEUBxNomT8YigGxelr/+dj75TONG3QzhhNFEhIFvpA0dQgZ+sK8CZHqneLr5ajKamcc5lCPPF7PAoA9rl6jd+/XIIUZ8/ioc011ny54L7saUBpAIdB1sXmThe+cNlPZwkOO2zgvred52RvPV9RcRMcSOkNrdAdLzAlaqD5+ddgnZE/ZRMLVMSPkFRtglcskYhaE6nq9mLl2dju89i35nxYai9tG3b3777+5G8H8tM3NPBH/zGCMGqCNnXEtlQZqU7aOIscKlT/W2Lz70lw9GBddjv+/Ly84awqHOAZMpvHjySs4gODswdqXfesevb01S1HkQ9C1ZCSUxo9OAL4I77WxKYKf34RUIhjdWm5uzuYrvbrmxyUlnwsCyD0dm6TAnMAOAilMqxDdVO9lW620Gb14WUej4TQsDNNDuHCkhdkw9FK4rl9WEWfubLIOmALBpGW5rUXdXb0ttU9btZLKZjitfo7c4fjUxvhk5N/CQpApe2220vdbz4wkvbn78Tjipr483tbmDtRSuJSTQoeo/AV2BpX5VOfuvmnpSFf9gr5c1QdaOLko81E3xE8ZUuLrVw5H/lnjjo03DwOfm+kYXqfRbDw/norOP0YMZvhXaqQ1zdm6puxajLePyVd1LhJ9Mom3YnAlUbegMuzKpTiWCwVwU8Wet9xH+4x5dPdjsXA3AegAaZtAUO0Qvm4yLbG729Off94D75b3uSIbmhQyasV0JqIWB7SvPed2wNEcD4yYnKvMuDzphtr8REPz5RsndFNI5f7b6hydx3xnU+I54NJUIFNXgyQ3YQmN2Xv4HZPz4JZe0JoMhZQmy7CiSmF/BZpkZ5f9X8zj/+YxdNvPv/IXzqN36gJkjZ8DARDQbSYWA7XuBjAaPJwoxm4yKn2kbK8mTIYrZtI5v0zOivlpv793frMGEHNTZbgo3j5TSQEdl2+/bnmE/+/lkbSAYBgfekyoaiGEXGa5EOZwfXV+Fz/JHFTf/1T18HMEFn0OydY8Uy40Ew4MPYHSsUXzaMGc+OBnmQxvMT1Q0qQJTUrh+wqsOOYWYv2+qT77RVn8vOSVPHckC9yaLeIdip8xdM8H/+RdvJlAbPBA9XvMnDCF5k9WYew3GLi86w6KJ+nUYn3/1g6HUieLvmSHk/mdYKSrDoKHXDi2mq4tx2avCC3TY/CIRicMlVqa2KDOuJFf76k8H7jFgLvzcBVC64ZWMqzWZQRQGJo24Sl2Gx5qCjYtqdccYRDnfrLJNhamqt1PF8DaEivXTpf90pLZqHHbn1ZgAvGxHkQcfeo+85PZqQjaBbBAFpbzwxg657oAuV7ydFEAX1x1dGRT0ksemLzrNSE3EtuameFwi9cnyaEfWuJ97tK5P35RUQsxAzDHGhKqe6GEW2TFLbLIJzCLHRmkZHU1MHI+KBJbFLF6I1e0Oq1hjBZ9xIBwY3ILEv5bDq0/yoZbgHPhFlUPZTLFYy480oaEnkabCmLlvef1aroG3vwnBDwe57p1NAdOquVFSJobnDqIrAdAAQXageguKyCnTh7ZGWYDCnedcdDU54LXwHMEU8QBCIKpTeWWXrJMu6ZBTfbFWyNbN80J0SJCyFJVE6b1Zqavsx1jfY7324qI3i1tKqZ3uornfSZWuzRxUDaBaJnMAiz8bMaCjQotz5wUJyEvTe7AYVels3veJJ3BhKORRoW4f1QDTUiQ5CcB/e7ypOgzobdf5+KNXEWFNM7VE5K0q9D/UfNVnkOMa9LcL0amdIATNi1AQ/98AkffODqIxJwk8OQsB5aNP3eYEgkURDL6nvAyF5gCc3T1uKbE+mtl48dEkyVIMnEQrb3DbGa0+GmCqByN00dTgZ1i8C4ZF/6GGs3nVqnJqHylCoM92b1xxgw23vC+H0JSCooFWBN0FM3P+/P3BAx3poSsGG2QkayLOMek3eeNB0aY65CUzbetXTnjLtPfUWErRZ+3k2ZtP7JIhop8XSNUY9FI+U2jN/P4eC6Zd+KPq68TwgAKuunS2p8u5OjrMwnNTzWIPK7aunw6RTBVf99UfDwD7yg699TUyehY+8FaPWcW3spisUCXRCt20U1zATWepc6bFXZbevxi+LeD8JeoKQbSWHQg/p6FnA/ptP/NqXxALdLw2+6eIA3CvPgc1fvCCBtqSQNhldn0QBbh9GcETs4yJe/Bf/qmfZh0VRxBN5Xyeyh7MkG2c4AgV2oWtJ7CkQFiBH2nu/bdo8n0amuq2i1hB7OJHKG4ziYXYai/K3bvnTj0mA3lwgApi990wM0N33/lKG33Cn7mExTu45agWUzqnM9nnA2LW++A/+tYBIrT90sXO+7UvAwQ9d783aHwwXh0IHbkMcBjVh1rjDBhk1m27xpK/be45GzstNfzby6Yui53wWuOB/2eg8vQSL3W8eydDUhKb1Uhoij+/+6hdmd5EIM7Fq995rTM9HacFgQYCXk9nLf1uD0YdfGZZu6vMMFmAygzeto77dzPqtYUZKsgBR3YKE5DwM+10fNJGiiJvFdjBbimajngKfuOSR3nz3NTF+sNsGsTGCN/tx7QMw0ep7n/ZnNYpxn23OPXO9ggq/nR1s1WRbBoqVpKO8H4PYTq591s2yvu6gvNBJNJCz402bDoMdBfvON3FW26HLSwdfsuxxeBgMwiFG6HsFOZ49OZJCyPfnYW/eW4P+99+PDEyVDvu227chOA8ubsv0G4QoIpuOvV/+pitYYT1ul1069CTYBViPDr6VgBpT+7IYbvxgnel67ITS4vY+7pGD4lD1vm9kiEjrrnZ5VW995TjSMaxpnUIsOJaPphrJ3bAcers1dP17SZey7catI+gxwzr+hOwTYYSxYbzbjGilC6Zxk5ZmuxkIQraB3GktrnpQNC5as2l0b83e+KFzLPrZsN77EwR9SzC9kZEUQnSX920y3bq6GUQY2WSc+wGO+y4idlHzLkJW5hNF3+6WiKS3avCAlq13vVk6zPu9CXwxNt289T2UK5ezJDLLjqHIR2EgO7aiqgEVDeGx73xApqnVZhtVrIbIjRD2kIoDqgfqXWMGv8EBBTRAeK6iYOhDuuoPYw2BF2GREEcP7eIHta37NLUOzhK32mjg1hjIurPROFRwXmOthuWZh7dTRwRm64N8FLA4PRC4c7CJWEsl5DisKYgBL9v6UAqGD9iH472/bzmgcFrut3f7Pblyb1VU83BjR7MwPjsmglLdI6pIfPpffmADc/TMh4PTYAKRYGk+a4A/U1k2p3JwvUNHgFuB4NBVADUjbqaxtIlHZE7/JcCouFqt2r10UM6jdRkHujUyg3cD57QRiDqe7cw9nnfysei9G1Wrd7olf60wLMrmrzdcwW+xGEyQLo44UnOKqgoCP0iI26q3CepgTKLQL6WUzePa5aLajj0BgOzq87ZL5lZgsr/9DDor4uu179H5SsSNtfDU1xCcKQYXqAWCeErfOEwdCZSEmctFHLQ5nMPhL5/Ie9apdXRdc8ZkNyYOyHiJPXtmBjTrbZ7a5PygTh+2VGksdjGV2dN0QmAAsopVn0AUqbk4LH65G4NtFT7fyw5SSO58IKy392lKWjRuZLAKuOpqjflQVyXnEYl55RCFDhLYx/4i55Evdb1u3WxOZThZOHW08vvjfJURwOn69Q5Yg8gsabc3tl6fg0dmjj+bOREAwBCN2oiVdm5TFMt0/0sd3Vw8/O6nF3V5f3vfVIOpzOoGofNQSaAISHd9FwD2oeum0AGHk8Htn3wNV//PtZ2/Kc1py/v+5+q3vO76T/9g5f9/Ca797efG3lFATOVbAqgCAFZQOCBMDgAA8EoAnQEqkADcAD5NIItEIqIhIjMUvGBQCYlnbYVJUCADGu+3rpNTpb8EHo12mg3b2aHBUReOrxHY5uWcmd/sytwa1PdMPH+LpRR4pqUrv7MDBa8+TgKQAwqYeD1x+qdsUoTTnePQa91A/zsm65mj5LYSMsdoyKSNZqXBpFkKQKANoy9swzpADJD2DKrOzlwYnoGnHN/fsHPqdqOIXUBz/cJtt0z/GYOcRvIf0gVG+jYbc/wYIgX1G6Z/+nzXUz+gTwsR7F2jpnGH6/dOKoRuIWRFagFgzbx9b78EpMjEHIL/yZ7LDcLNYU9F2ANHaN1fhmvJUrtbtmmXSFwgjoTSi9EDLfbGzdE8LXdv98tjKbAN+fPdxrGgGi5HJiBicBm5R23QCBRB3II4Jx1LL/Xsi1J7YNKtpmW92nJpSj7B2IlCns+rT2+TR6VDyvQHuykc41qR6UWdVxDR8TZDP+/jg/h8s5uQ5YnjMEAEnJpPOsN8hSJFgnCW3sak9WJ0X6StAM09pUbgT+brfbAsVbQl6piCfvfeK/HMB3jLbFWkeIIBpnyS8U05iWsozzadqxrXvW7HF5gVfswE235M4Gmxr8gFroEs30wPXLDPP0W+U06cMkaIwxq21A/7vDYnSVhr1iyJeoqbAWCkd704HlkRrKeKLR1VQxPyLzTh4JSRd4MRL8c+/7p0BW1z/XLWXXESpVdO5m3tk7m1PqmqnC1GWYcfdLT46Pg5jJ8q3aIBETU3wy5Yxfl7fh6M0ol49ZvoTTRpVvbqaCUAXMrL2O9rVcY0LLOg4hRNedUmL3ZIsYAA/uxByNJI/Nf3V7ywPrXRLNlohRYVt8PHh/lR+GvPwTF9/y0SLGMI7j22shUANio/ofDXGi6veTXIy/vCT2loD9DSuUSo7F3+AFTf8V0SUNpa+hChVIc9QtJz3SHHUyTHzlv/TCF4XEb7Yo/UVLAmd9cVExE/SfxZVRT6319NtUe2pXrgNnbJfBMmgiJbC+hz9dNeiNV31s11QAQ/EFC/XKuBEyBmOk71cC8vRHQ9gJvVH694iy/89r56Ygf1gNTlfQFQw4u5njH5PuLv8cr+T4stsrO6d8CEj4pGgqBED3wTKq+iybF2CPxZFfezo1NB2XiUZu9z4dJQZFqbYzckHP1g4NsowX7xn7WU/8UUhunpx4jOvv5pG81RHVhkJbKnqn3nFGwxkxWGk0IOboXrevY8BkAGcHEBPlYi1RUOtaYBfRVXlSOvl3YE7C+hYXyB7pfFsFAZkX2lV+YZulnNwLAUteqS4nrf0XkNELj8ymDUs5pGPvGFcUHPfoM0+WyDHtH0lgbAX9vLjMbezBfy4u+BQj3QD0D6RU8sS7cp/ckir1wOuj/qt5qH+wUAu2vGGvLd37+lUzUZgFNSVKUxcTFf6RV3TN/SnMNYN7H9iW4AsJT4T+6fqXHlPQtYKr5xAC5hVF8K29GV+8OO97yxEPCpgmW5XZx5I7zsmdNBWI6uJHAnKTBWL5JKPgZCw7nVZBLUxT9qAt3yGhcFfUyWnRQfmli7LeZgD753ZxKUycnePOASlVVWMhiaaxnDSIGFsEl6UgrMvROIsmxyH2QHXqxiIRGvq1jU0pPdmYUo96XEKgrlkor4VOjCxV26oOgOvAnbTSCG8GNTRHbMQJ6i1BAI/NlT4ZtWx3LaFS4Yc7bwJibUXJjTmFIdXA5uxO5lfWSCul4fGY4Z8U4Pq9c+0mURdMguNSyGXtc/mA1bcNf2H90fLknAcUFU6NCGmed+N9XI2nYRPg8CmtOraCvoQRfzn/7cSmN5gqdfiPUOpDQL/cVVxGm4q5gh5DExkoBeSdu0+bXj42maWyPednwAg30hE0wgJaObDYo91vqkUS4gW6Zbm5fYRH3d0tOwqjDVviOD8dwZxSSjjnv95+kpyO5Yfmz3yiUjZCTbNo/lpOHvM7UzOD2iLwEa2lOIjLg9nB1Gn2+c6xjcI6dtOOoIXLZF9Dcnos0Hc4KSYxW5KADTudgQZEO799O5gwnksw2yQaUYRDg5sTHTYS/uo/yNBoQaxqOLiMfLBNXW0mOz/Qgi4LntBGTyTCw6HZzgg5SlFLNgErnjiM4osv3j3eiCPth5l707M9Bmrlbhb7xJkE6awokPjTaAwkli0CrmfubZSsIu+sxeWleL8OIMHf5pdI3atilX9v7/XjPXVioTnoUVEs44EqBqsDzWlcDxHmO0yj/qxqYK6zBAnXUXmo+ybP6hO89My6+aZcVChtlSjeilbkw3+RbxT1l16gW55L0P3d2y0vCf7735nHyKhyee9U256Xrv+fd+R/h9d77eySxpzY0UJkNT6ILr0uvQrhYCZ1QeuI/6VblR5sBw2sKye5j1IC+ejRgUDolSi54tVimFSJbkFQAVQMtUfU4zssoetr/IRsPw9CFCAGcOPU3DguuxW5Mr2Re2svTfiwmaTYKemq/CH42jdsn4ygr0sA8maYRBzHJKzWdOa5NYTlZPupTaQqoaFQpaczlrUaDall/vEXC0K5Pxn8EAiiwr9UE/nlA65mKdD51BYxsAHhR0guztMEpzrUEyyipg40maj5DGJ4Ikd0EFsblO1z88HdNWCZ6bjsQWllPxsj4XunYZMvoLIRgqQr09XFoGg/bZfepHGaALzL5WOYP8+ANvvkIcQjXNjgHFpeST1VFAwT4XVyHnKDl2BFIEc4L+FNKUtFQvOxoqI+3M3dgV0JgWw6MzV4zh277Um83YtLNBEbHISJwIXrQVuPBC5ITCjuwXJtPKMhzukwSzMw0QEKMXJXJI2Tdh0cvG85Oy9QDOp7rWl5lQXnE+PGXJTLUOWtDlpxQBrOVCjWRcx3S/u4lI33OR2XOmYPH0j6nv/yKDOUhLpEsIYBnwfhamvM6k9u3dNCdJnGqWpLWDdACVCWZ/g0N/m4EhyBdABL4MHHhyY2CxuEssTPIrY1TiblUr3R3IZ1BH/rtu4AiK+4gkqwv+STo0YrOtRMwpj4OfRc4S8tj1RDd/KoPL97djdQKqHw+RzV2vN7pcX/qdKHB3Ur2BZM0ZHGiySwYZmejIh5BWZWN5ujmkqt3CzTHZ0mFpYjr7WnZNsKPhPONdWwyyjfLD1XwIdL7hRjifQnySqDjzh3TBc8On5M9AvRebX7Ud+bYsIYdITvVg6AoZFl50bVFEOEQhaZfCmGiVLXrjN1kStASBzNK4XCLPsff1mioAorihEeBKcg2PZKTPLCRuwCuIj4ZTLE6jMx4wxSP8TOww5xXQldWpel64pxJyqsns6BFh9hFPXEMzxWxygc8eV1bpgjmx7xYsi7HQ/ntQSU6tuxn5i2X8VlwvAGXj5f7rMkP+whKoQFlSCDgrcc3FQNQFsO5ZOxniZaebV4vLccjYqh3WOuxQn/Xj8qjDmCRiEvWgTM7hbbecsBb7MVW+8XSbc1A900ruZ/NVSW09mH0vvUv4McbN0ocqqwrW2dCEiTfWI67MrUDt7/Z7/McgCxsXRNW3LAErqh8Qvl3UxMhXD5TEXaJTBAialwz9toD6vziIIDUj6HNCjH2wKOTCH5f2VcNICbS3Uok1cfPgWRcUK0O9uEHdBxwEmgFUKDg2UlGP44rGrbNv59qLJibf4A5uNbLHrxAKIuvdz8bf4fmcMUZog76JAHetj0B5hm5jHev4mfIWw8Pyl/+R3c3/smepXurC/eEeVqvTVNWEwacauoNnNyYRI0KHFFh/MULS2X7qWjrt6JKTNeLCz3HCHeBuduiAvpktEeiPBla4Fm4UwdPSpJw1ZvPtfm0dYYQTv0NDJ3qQi86b4ngfkEd5j+J13zJh86Ktbq35YLmbcyWWsA7zRerR22JjBBk5CQi5LMFfoOCQWttc1VOTUTEhAknjNBPtIOG/cV3zV32FW82Rj3zsGRUzjwnGAb1hSvUqLAF7OxuQFHjVGmyyL3bW3dMQao0D23yMRvOZlr+p+tb76KQujsFBf8ljtov3n8unhcT/T/v530sSeOfLRJlgvxVsuWyAiAsAzFebMssRWumJoTjeQ0Qy9++4AUcnqPG0okPcqwOE5bz4lFl1azSJvbffgRY0oSxYXX7BDVn7N19BnrC8zgYEjBjXkttxa8AH4HHwAgaKSNWvxde00UWe+7YQw1jbIPJaIvX4P8e/qPZggi1vXAkP56gGtrdpwvNcgCIUBNZQDqs8smYjFSUP9Jiy7hSaGbS91+YDeZ5HPnogaY63DPdIAcfS4s68M5wzFgumRV5LaKaSaLmg0bMLDyxOc2O+HvEJEBidMPRL7c//OuqxeE4Fw56Vbv6RL9hmQdSrsHq3EgAzBHSz2bLyVZiezooV1oLkfXEv38XhMrSs+eoqmms/YG1nmFOZVSMMJ69avnzg+bAIAj1YofAeBdqmQM/nWDJ8FWEPk6TsKYXyQJX8I4W+YCqTVs0I0hBSqq4jDnlKu5yxtv71UuyIAz2uq7pePnKB+NMpZAAc9LX+WYJcO9OY/tKIZ14WLxXFBr4dFhT1BXC5ztZ1WmEpla/F/uUCR6YCw2abpAezFyX5htFDIk1bxt/wAgMFN9orgi8S7s3c1Iv9Lw0h5Lc1EPBTQ/I2275J7smkfexgyoIEnxEvM0XWG50rncvb8EqTjxTVPxlKWEPIYDjUVYFAxJvJRGk8AaIhV6+nrPT5s29MLlsFWKVgOkuockVdokjAyKpVKrz5CvFm2hhch86pJXFdE/+rblapFeY3kAjxG8ovbx2C7tMdJ16Li+8u8qBNEhKLiiuppfqF0LQBnCJ4Wvs/i2p2bBMANCRLu74QZetN1OZ37HAf5lDDmkoCKJfIX9pSC/YoE8x60HOPtLpqmDf1wCJqVv88iDYShGmT0My0ccYKEL8+3ZfL0QSG5AAA" alt="Team member 1" class="avatar" />
+        <img src="data:image/webp;base64,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" alt="Team member 2" class="avatar" />
+      </div>
+      <div class="sub">Flight Plan Tool</div>
+    </div>
+
+    <div class="readout">
+      <div class="row"><span>Performance Area</span><span id="r-pa">— m²</span></div>
+      <div class="row"><span>Drones @ 30m²</span><span id="r-drones-30">—</span></div>
+      <div class="row"><span>Drones @ 20m²</span><span id="r-drones-20">—</span></div>
+      <div class="row"><span>Audience → PA front</span><span id="r-bearing">— m</span></div>
+      <div class="row"><span>TOLZ → PA dist</span><span id="r-dist">— m</span></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        <span class="swatch" style="background: var(--pa-color)"></span>
+        Performance Area
+      </div>
+      <div class="input-row">
+        <label>Width</label>
+        <input type="number" id="pa-length" value="60" min="5" step="5" />
+        <span class="unit">m</span>
+      </div>
+      <div class="input-row">
+        <label>Depth</label>
+        <input type="number" id="pa-width" value="40" min="5" step="5" />
+        <span class="unit">m</span>
+      </div>
+      <div class="input-row">
+        <label>Height</label>
+        <input type="number" id="pa-height" value="150" min="0" step="10" />
+        <span class="unit">m</span>
+      </div>
+      <button class="btn-reset-pa" id="btn-reset-pa">↺ Reset to Rectangle</button>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        <span class="swatch" style="background: var(--tolz-color)"></span>
+        Take-off / Landing Zone
+      </div>
+      <div class="input-row">
+        <label>Length</label>
+        <input type="number" id="tolz-length" value="10" min="2" step="1" />
+        <span class="unit">m</span>
+      </div>
+      <div class="input-row">
+        <label>Width</label>
+        <input type="number" id="tolz-width" value="10" min="2" step="1" />
+        <span class="unit">m</span>
+      </div>
+      <div class="input-row">
+        <label>Drone columns</label>
+        <input type="number" id="tolz-cols" value="13" min="1" step="1" />
+        <span class="unit">C</span>
+      </div>
+      <div class="input-row">
+        <label>Drone rows</label>
+        <input type="number" id="tolz-rows" value="13" min="1" step="1" />
+        <span class="unit">R</span>
+      </div>
+      <div class="input-row">
+        <label>Drone separation (Columns)</label>
+        <input type="number" id="tolz-sep-x" value="0.8" min="0.1" step="0.1" />
+        <span class="unit">m</span>
+      </div>
+      <div class="input-row">
+        <label>Drone separation (Rows)</label>
+        <input type="number" id="tolz-sep-y" value="0.8" min="0.1" step="0.1" />
+        <span class="unit">m</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        <span class="swatch" style="background: var(--buffer-color)"></span>
+        Safety Buffer
+      </div>
+      <div class="input-row">
+        <label>Around Performance Area</label>
+        <input type="number" id="pa-buffer-dist" value="30" min="0" step="5" />
+        <span class="unit">m</span>
+      </div>
+      <div class="input-row">
+        <label>Around TOLZ</label>
+        <input type="number" id="tolz-buffer-dist" value="30" min="0" step="5" />
+        <span class="unit">m</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        <span class="swatch" style="background: var(--pa-color)"></span>
+        Performance Area Orientation
+      </div>
+      <div class="toggle-row">
+        <button class="toggle-btn active" data-pa-mode="auto">Auto (⊥ Audience)</button>
+        <button class="toggle-btn" data-pa-mode="manual">Manual</button>
+      </div>
+      <div class="rotation-row">
+        <label style="font-size: 11px; color: var(--text-2);">Rotation (degrees from North)</label>
+        <div class="rotation-controls">
+          <input type="range" id="rotation-slider" min="0" max="359" value="0" />
+          <input type="number" id="rotation-input" min="0" max="359" value="0" step="1" />
+          <button class="icon-btn" id="rot-minus" title="−90°">−90</button>
+          <button class="icon-btn" id="rot-plus" title="+90°">+90</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        <span class="swatch" style="background: var(--tolz-color)"></span>
+        TOLZ Orientation
+      </div>
+      <div class="toggle-row">
+        <button class="toggle-btn active" data-tolz-mode="match">Match PA</button>
+        <button class="toggle-btn" data-tolz-mode="manual">Manual</button>
+      </div>
+      <div class="rotation-row">
+        <label style="font-size: 11px; color: var(--text-2);">Rotation (degrees from North)</label>
+        <div class="rotation-controls">
+          <input type="range" id="tolz-rotation-slider" min="0" max="359" value="0" />
+          <input type="number" id="tolz-rotation-input" min="0" max="359" value="0" step="1" />
+          <button class="icon-btn" id="tolz-rot-minus" title="−90°">−90</button>
+          <button class="icon-btn" id="tolz-rot-plus" title="+90°">+90</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Reference Lines</div>
+      <div class="toggle-row">
+        <button class="toggle-btn" id="btn-draw-line">Draw Line</button>
+        <button class="toggle-btn" id="btn-clear-lines">Clear All</button>
+      </div>
+      <div class="help-text">
+        Click two points to draw a line. Right-click a line to delete. Esc cancels. Lines are not exported.
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Geofence</div>
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="primary-geofence-enabled" />
+        <span class="checkbox-swatch" style="background: var(--primary-geofence);"></span>
+        Primary Geofence
+      </label>
+      <div class="nested-inputs" id="primary-geofence-inputs">
+        <div class="input-row">
+          <label>Around PA</label>
+          <input type="number" id="primary-pa-buffer" value="10" min="0" step="5" />
+          <span class="unit">m</span>
+        </div>
+        <div class="input-row">
+          <label>Around TOLZ</label>
+          <input type="number" id="primary-tolz-buffer" value="10" min="0" step="5" />
+          <span class="unit">m</span>
+        </div>
+        <button id="btn-reset-primary-gf" class="reset-btn">Reset to auto</button>
+      </div>
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="secondary-geofence-enabled" />
+        <span class="checkbox-swatch" style="background: var(--secondary-geofence);"></span>
+        Secondary Geofence
+      </label>
+      <div class="nested-inputs" id="secondary-geofence-inputs">
+        <div class="input-row">
+          <label>Around PA</label>
+          <input type="number" id="secondary-pa-buffer" value="20" min="0" step="5" />
+          <span class="unit">m</span>
+        </div>
+        <div class="input-row">
+          <label>Around TOLZ</label>
+          <input type="number" id="secondary-tolz-buffer" value="15" min="0" step="5" />
+          <span class="unit">m</span>
+        </div>
+        <button id="btn-reset-secondary-gf" class="reset-btn">Reset to auto</button>
+      </div>
+
+      <label style="font-size: 11px; color: var(--text-2); display: block; margin-top: 12px;">Origin</label>
+      <div class="origin-input-row">
+        <input type="text" id="origin-input" placeholder="lat, lng" autocomplete="off" />
+      </div>
+      <div class="help-text">
+        Geofence vertices values will only be generated after inputing Origin coordinates.
+      </div>
+      <div class="vertex-readout" id="vertex-readout"></div>
+    </div>
+
+    <div class="actions">
+      <button class="btn" id="btn-reset">Reset</button>
+      <button class="btn" id="btn-recenter">Recenter</button>
+      <button class="btn" id="btn-import">Import KML/KMZ</button>
+      <button class="btn primary" id="btn-export">Export KML</button>
+      <input type="file" id="kml-file-input" accept=".kml,.kmz" style="display:none;" />
+    </div>
+  </aside>
+
+  <div class="map-wrap">
+    <div id="map"></div>
+    <button class="sidebar-toggle" id="btn-sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar">
+      <span class="icon">‹</span>
+    </button>
+    <div class="coord-search">
+      <input type="text" id="coord-input" placeholder="lat, lng  —  e.g. 1.355676, 103.987992" autocomplete="off" />
+      <button id="coord-clear" title="Clear search pin" aria-label="Clear search pin">✕</button>
+      <button id="coord-go">Go</button>
+    </div>
+    <button class="launch-btn" id="btn-launch">🚀 Let's Goooo!</button>
+    <div class="map-overlay" id="map-overlay">
+      Search a coordinate above and pan the map to your venue, then click <strong>Let's Goooo!</strong> to drop the flight plan template.
+    </div>
+    <div class="toast" id="toast"></div>
+  </div>
+</div>
+
+<script>
+// ===== state =====
+const state = {
+  audience: null,        // {lat, lng}
+  paCenter: null,        // {lat, lng}
+  tolz: null,            // {lat, lng}
+  paLength: 60,
+  paWidth: 40,
+  paHeight: 150,
+  tolzLength: 10,
+  tolzWidth: 10,
+  tolzCols: 13,
+  tolzRows: 13,
+  tolzSepX: 0.8,
+  tolzSepY: 0.8,
+  paBufferDist: 30,
+  tolzBufferDist: 30,
+  rotationMode: 'auto',      // 'auto' | 'manual' (PA)
+  manualRotation: 0,         // PA manual rotation in degrees
+  tolzRotationMode: 'match', // 'match' | 'manual'
+  tolzManualRotation: 0,     // TOLZ manual rotation in degrees
+  paIsCustom: false,         // true once vertices have been edited
+  paCustomCoords: null,      // [[lng, lat], ...] when paIsCustom
+  // Geofence
+  primaryGfEnabled: false,
+  secondaryGfEnabled: false,
+  primaryPaBuffer: 10,
+  primaryTolzBuffer: 10,
+  secondaryPaBuffer: 20,
+  secondaryTolzBuffer: 15,
+  // Custom (manually edited) outer ring for each geofence. null = auto-computed.
+  // When the user drags a vertex, the current auto polygon is snapshotted into
+  // these arrays and rendered from then on. Buffer/PA/TOLZ changes do NOT
+  // automatically refresh a custom geofence — the user must click reset.
+  primaryGfCustomCoords: null,   // [[lng, lat], ...]
+  secondaryGfCustomCoords: null, // [[lng, lat], ...]
+  origin: null,              // {lat, lng} when set
+};
+
+// ===== map setup =====
+const map = L.map('map', {
+  zoomControl: true,
+  attributionControl: true,
+}).setView([1.355676, 103.987992], 17); // Default starting location
+
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Imagery © Esri',
+  maxZoom: 21,
+}).addTo(map);
+
+// ===== layers =====
+const paLayer = L.polygon([], {
+  color: '#00ff00',
+  weight: 2,
+  fillColor: '#00ff00',
+  fillOpacity: 0.5,
+  interactive: false,
+}).addTo(map);
+
+const tolzLayer = L.polygon([], {
+  color: '#a020f0',
+  weight: 2,
+  fillColor: '#a020f0',
+  fillOpacity: 0.5,
+  interactive: false,
+}).addTo(map);
+
+const bufferLayer = L.geoJSON(null, {
+  style: {
+    color: '#ef4444',
+    weight: 2,
+    fillColor: '#ef4444',
+    fillOpacity: 0.05,
+    interactive: false,
+  },
+}).addTo(map);
+
+const primaryGeofenceLayer = L.polygon([], {
+  color: '#3b82f6',
+  weight: 2,
+  fillColor: '#3b82f6',
+  fillOpacity: 0,
+  interactive: false,
+}).addTo(map);
+
+const secondaryGeofenceLayer = L.polygon([], {
+  color: '#facc15',
+  weight: 2,
+  fillColor: '#facc15',
+  fillOpacity: 0,
+  interactive: false,
+}).addTo(map);
+
+// Reference circles drawn at each PA and TOLZ vertex with radius equal to the
+// corresponding buffer distance. Edges of the geofence should be tangent to
+// these circles — they're a visual aid for verifying / manually tuning the
+// tangency property.
+const geofenceReferenceLayer = L.layerGroup().addTo(map);
+function drawReferenceCircles(paPoly, tolzPoly) {
+  geofenceReferenceLayer.clearLayers();
+  function addCircles(poly, radiusM, color) {
+    if (!poly || !radiusM) return;
+    const ring = poly.geometry.coordinates[0].slice(0, -1);
+    ring.forEach(([lng, lat]) => {
+      L.circle([lat, lng], {
+        radius: radiusM,
+        color,
+        weight: 1,
+        opacity: 0.5,
+        dashArray: '3, 4',
+        fill: false,
+        interactive: false,
+      }).addTo(geofenceReferenceLayer);
+    });
+  }
+  if (state.primaryGfEnabled) {
+    addCircles(paPoly, state.primaryPaBuffer, '#3b82f6');
+    addCircles(tolzPoly, state.primaryTolzBuffer, '#3b82f6');
+  }
+  if (state.secondaryGfEnabled) {
+    addCircles(paPoly, state.secondaryPaBuffer, '#facc15');
+    addCircles(tolzPoly, state.secondaryTolzBuffer, '#facc15');
+  }
+}
+
+// connector line from audience to PA center
+const connectorLayer = L.polyline([], {
+  color: '#fbbf24',
+  weight: 1,
+  opacity: 0.5,
+  dashArray: '4, 6',
+  interactive: false,
+}).addTo(map);
+
+const originIcon = L.divIcon({ className: 'origin-marker', iconSize: [18, 18] });
+let originMarker = null;
+
+// ===== draggable markers =====
+const audienceIcon = L.divIcon({ className: 'audience-marker', iconSize: [18, 18] });
+const paCenterIcon = L.divIcon({ className: 'center-marker', iconSize: [24, 24] });
+const tolzCenterIcon = L.divIcon({
+  className: 'center-marker',
+  iconSize: [20, 20],
+  html: '',
+});
+const vertexIcon = L.divIcon({ className: 'vertex-marker', iconSize: [12, 12] });
+const midpointIcon = L.divIcon({ className: 'midpoint-marker', iconSize: [10, 10] });
+
+let audienceMarker, paCenterMarker, tolzCenterMarker;
+let paVertexMarkers = [];
+let paMidpointMarkers = [];
+
+// Geofence vertex/midpoint markers — populated by rebuildGeofenceHandles().
+let primaryGfVertexMarkers = [];
+let primaryGfMidpointMarkers = [];
+let secondaryGfVertexMarkers = [];
+let secondaryGfMidpointMarkers = [];
+
+function initFromMapCenter() {
+  const c = map.getCenter();
+  // place audience pin slightly west, PA slightly east of map center, TOLZ near audience
+  const audOffset = turf.destination([c.lng, c.lat], 0.06, 270, { units: 'kilometers' });
+  const paOffset = turf.destination([c.lng, c.lat], 0.04, 90, { units: 'kilometers' });
+  const tolzOffset = turf.destination([c.lng, c.lat], 0.05, 270, { units: 'kilometers' });
+
+  state.audience = { lat: audOffset.geometry.coordinates[1], lng: audOffset.geometry.coordinates[0] };
+  state.paCenter = { lat: paOffset.geometry.coordinates[1], lng: paOffset.geometry.coordinates[0] };
+  state.tolz = { lat: tolzOffset.geometry.coordinates[1], lng: tolzOffset.geometry.coordinates[0] };
+
+  if (audienceMarker) map.removeLayer(audienceMarker);
+  if (paCenterMarker) map.removeLayer(paCenterMarker);
+  if (tolzCenterMarker) map.removeLayer(tolzCenterMarker);
+
+  audienceMarker = L.marker([state.audience.lat, state.audience.lng], { icon: audienceIcon, draggable: true })
+    .bindTooltip('Audience', { permanent: true, direction: 'top', offset: [0, -10], className: 'aud-tt' })
+    .addTo(map);
+
+  paCenterMarker = L.marker([state.paCenter.lat, state.paCenter.lng], { icon: paCenterIcon, draggable: true })
+    .bindTooltip('PA Center', { permanent: true, direction: 'top', offset: [0, -14], className: 'pa-tt' })
+    .addTo(map);
+
+  tolzCenterMarker = L.marker([state.tolz.lat, state.tolz.lng], { icon: tolzCenterIcon, draggable: true })
+    .bindTooltip('TOLZ', { permanent: true, direction: 'top', offset: [0, -10], className: 'tolz-tt' })
+    .addTo(map);
+
+  audienceMarker.on('drag', (e) => {
+    const ll = e.target.getLatLng();
+    state.audience = { lat: ll.lat, lng: ll.lng };
+    redraw();
+  });
+  paCenterMarker.on('drag', (e) => {
+    const ll = e.target.getLatLng();
+    if (state.paIsCustom && state.paCustomCoords) {
+      // Translate every custom vertex by the same delta
+      const dLat = ll.lat - state.paCenter.lat;
+      const dLng = ll.lng - state.paCenter.lng;
+      state.paCustomCoords = state.paCustomCoords.map(([lng, lat]) => [lng + dLng, lat + dLat]);
+    }
+    state.paCenter = { lat: ll.lat, lng: ll.lng };
+    redraw();
+  });
+  tolzCenterMarker.on('drag', (e) => {
+    const ll = e.target.getLatLng();
+    state.tolz = { lat: ll.lat, lng: ll.lng };
+    redraw();
+  });
+}
+
+// ===== geometry =====
+function rectanglePolygon(centerLngLat, lengthM, widthM, bearingDeg) {
+  // bearing is the direction the "length" axis points (degrees from North)
+  // returns turf polygon
+  const halfL = lengthM / 2;
+  const halfW = widthM / 2;
+  const km = 0.001;
+
+  // From center, walk along length axis (forward+back) and width axis (left+right)
+  const fwd = bearingDeg;
+  const back = (bearingDeg + 180) % 360;
+  const right = (bearingDeg + 90) % 360;
+  const left = (bearingDeg + 270) % 360;
+
+  // The 4 corners: front-right, back-right, back-left, front-left
+  function step(from, brng, distM) {
+    const r = turf.destination(from, distM * km, brng, { units: 'kilometers' });
+    return r.geometry.coordinates;
+  }
+
+  // mid-front
+  const midFront = step(centerLngLat, fwd, halfL);
+  const midBack = step(centerLngLat, back, halfL);
+
+  const fr = step(midFront, right, halfW);
+  const fl = step(midFront, left, halfW);
+  const br = step(midBack, right, halfW);
+  const bl = step(midBack, left, halfW);
+
+  return turf.polygon([[fr, br, bl, fl, fr]]);
+}
+
+function getPABearing() {
+  if (state.rotationMode === 'manual') {
+    return state.manualRotation;
+  }
+  // auto: bearing from audience to PA center, then PA's length axis is perpendicular
+  const audPt = [state.audience.lng, state.audience.lat];
+  const paPt = [state.paCenter.lng, state.paCenter.lat];
+  const audToPa = turf.bearing(audPt, paPt); // -180..180
+  // length axis perpendicular -> add 90
+  const lengthBearing = (audToPa + 90 + 360) % 360;
+  return lengthBearing;
+}
+
+function getTOLZBearing() {
+  if (state.tolzRotationMode === 'manual') {
+    return state.tolzManualRotation;
+  }
+  // match PA bearing
+  return getPABearing();
+}
+
+// Returns the PA as a turf polygon — either the rectangle from L/W/center/bearing,
+// or the user's custom-edited polygon when paIsCustom is true.
+function getPAPoly() {
+  if (state.paIsCustom && state.paCustomCoords && state.paCustomCoords.length >= 3) {
+    const ring = [...state.paCustomCoords, state.paCustomCoords[0]];
+    return turf.polygon([ring]);
+  }
+  return rectanglePolygon(
+    [state.paCenter.lng, state.paCenter.lat],
+    state.paLength,
+    state.paWidth,
+    getPABearing()
+  );
+}
+
+function getPACoords() {
+  // Outer-ring coords without duplicate closing vertex
+  return getPAPoly().geometry.coordinates[0].slice(0, -1);
+}
+
+function switchToPACustomMode() {
+  if (state.paIsCustom) return;
+  state.paIsCustom = true;
+  state.paCustomCoords = getPACoords();
+  // Once the shape is custom, "auto perpendicular" no longer makes sense
+  if (state.rotationMode === 'auto') {
+    state.manualRotation = Math.round(getPABearing());
+    state.rotationMode = 'manual';
+  }
+  updatePAControlsDisabled();
+}
+
+function resetPAToRectangle() {
+  state.paIsCustom = false;
+  state.paCustomCoords = null;
+  updatePAControlsDisabled();
+  rebuildPAHandles();
+  redraw();
+}
+
+// ===== Geofence custom-mode helpers =====
+// A geofence is stored as an array of rings (one ring per polygon part):
+//   [[ [lng,lat], [lng,lat], ... ],  ...]
+// This supports both single-Polygon and MultiPolygon results uniformly.
+
+function gfCustomKey(which) {
+  return which === 'primary' ? 'primaryGfCustomCoords' : 'secondaryGfCustomCoords';
+}
+function gfMarkers(which) {
+  return which === 'primary'
+    ? { v: primaryGfVertexMarkers, m: primaryGfMidpointMarkers }
+    : { v: secondaryGfVertexMarkers, m: secondaryGfMidpointMarkers };
+}
+function gfBuffers(which) {
+  return which === 'primary'
+    ? { pa: state.primaryPaBuffer, tolz: state.primaryTolzBuffer }
+    : { pa: state.secondaryPaBuffer, tolz: state.secondaryTolzBuffer };
+}
+function gfEnabled(which) {
+  return which === 'primary' ? state.primaryGfEnabled : state.secondaryGfEnabled;
+}
+
+function geofenceToRings(poly) {
+  if (!poly || !poly.geometry) return null;
+  if (poly.geometry.type === 'MultiPolygon') {
+    return poly.geometry.coordinates.map(p => p[0].slice(0, -1));
+  }
+  return [poly.geometry.coordinates[0].slice(0, -1)];
+}
+function ringsToGeofence(rings) {
+  if (!rings || rings.length === 0) return null;
+  if (rings.length === 1) {
+    return turf.polygon([[...rings[0], rings[0][0]]]);
+  }
+  return turf.multiPolygon(rings.map(r => [[...r, r[0]]]));
+}
+
+function autoComputeGeofence(which) {
+  const paPoly = getPAPoly();
+  const tolzBearing = getTOLZBearing();
+  const tolzPoly = rectanglePolygon(
+    [state.tolz.lng, state.tolz.lat],
+    state.tolzLength, state.tolzWidth, tolzBearing
+  );
+  const buf = gfBuffers(which);
+  return computeGeofence(paPoly, tolzPoly, buf.pa, buf.tolz);
+}
+
+function getCurrentGeofence(which) {
+  const key = gfCustomKey(which);
+  if (state[key]) return ringsToGeofence(state[key]);
+  return autoComputeGeofence(which);
+}
+
+function switchGfToCustom(which) {
+  const key = gfCustomKey(which);
+  if (state[key]) return;
+  const gf = autoComputeGeofence(which);
+  const rings = geofenceToRings(gf);
+  if (!rings) return;
+  state[key] = rings;
+  document.getElementById(`btn-reset-${which}-gf`).classList.add('visible');
+}
+
+function resetGfToAuto(which) {
+  const key = gfCustomKey(which);
+  state[key] = null;
+  document.getElementById(`btn-reset-${which}-gf`).classList.remove('visible');
+  redraw();
+  toast(`${which === 'primary' ? 'Primary' : 'Secondary'} geofence reset`);
+}
+
+function rebuildGeofenceHandles(which) {
+  const m = gfMarkers(which);
+  m.v.forEach(mk => map.removeLayer(mk));
+  m.m.forEach(mk => map.removeLayer(mk));
+  m.v.length = 0;
+  m.m.length = 0;
+
+  if (!gfEnabled(which)) return;
+
+  const key = gfCustomKey(which);
+  const rings = state[key] || geofenceToRings(autoComputeGeofence(which));
+  if (!rings) return;
+
+  rings.forEach((ring, ringIdx) => {
+    // Vertex handles — drag to move, right-click to delete
+    ring.forEach((c, i) => {
+      const marker = L.marker([c[1], c[0]], { icon: vertexIcon, draggable: true }).addTo(map);
+      marker.on('dragstart', () => {
+        switchGfToCustom(which);
+      });
+      marker.on('drag', (e) => {
+        const ll = e.target.getLatLng();
+        state[key][ringIdx][i] = [ll.lng, ll.lat];
+        // Lightweight update during drag: refresh only the affected polygon.
+        // Skip rebuilding handles (would tear out the marker being dragged)
+        // and skip the heavy redraw (safety buffer, reference circles, etc.).
+        const layer = which === 'primary' ? primaryGeofenceLayer : secondaryGeofenceLayer;
+        layer.setLatLngs(geofenceToLeafletLatLngs(ringsToGeofence(state[key])));
+      });
+      marker.on('dragend', () => {
+        // Full redraw on release — updates reference circles, vertex readout,
+        // KML state, and rebuilds handles to refresh midpoint positions.
+        redraw();
+      });
+      marker.on('contextmenu', (e) => {
+        L.DomEvent.preventDefault(e);
+        L.DomEvent.stopPropagation(e);
+        switchGfToCustom(which);
+        if (state[key][ringIdx].length > 3) {
+          state[key][ringIdx].splice(i, 1);
+          rebuildGeofenceHandles(which);
+          redraw();
+          toast('Vertex deleted');
+        } else {
+          toast('Need at least 3 vertices');
+        }
+      });
+      m.v.push(marker);
+    });
+
+    // Edge midpoints — click to insert a new vertex
+    for (let i = 0; i < ring.length; i++) {
+      const next = ring[(i + 1) % ring.length];
+      const mid = [(ring[i][0] + next[0]) / 2, (ring[i][1] + next[1]) / 2];
+      const marker = L.marker([mid[1], mid[0]], { icon: midpointIcon, draggable: false }).addTo(map);
+      const insertAfter = i;
+      const capturedRingIdx = ringIdx;
+      marker.on('click', () => {
+        switchGfToCustom(which);
+        state[key][capturedRingIdx].splice(insertAfter + 1, 0, [mid[0], mid[1]]);
+        rebuildGeofenceHandles(which);
+        redraw();
+        toast('Vertex added');
+      });
+      m.m.push(marker);
+    }
+  });
+}
+
+function updatePAControlsDisabled() {
+  const off = state.paIsCustom;
+  document.getElementById('pa-length').disabled = off;
+  document.getElementById('pa-width').disabled = off;
+  document.querySelectorAll('.toggle-btn[data-pa-mode]').forEach(b => b.disabled = off);
+  document.getElementById('rotation-slider').disabled = off;
+  document.getElementById('rotation-input').disabled = off;
+  document.getElementById('rot-minus').disabled = off;
+  document.getElementById('rot-plus').disabled = off;
+  document.getElementById('btn-reset-pa').classList.toggle('visible', off);
+}
+
+function rebuildPAHandles() {
+  paVertexMarkers.forEach(m => map.removeLayer(m));
+  paMidpointMarkers.forEach(m => map.removeLayer(m));
+  paVertexMarkers = [];
+  paMidpointMarkers = [];
+
+  const coords = getPACoords();
+
+  // Vertex handles — drag to move, right-click to delete
+  coords.forEach((c, i) => {
+    const marker = L.marker([c[1], c[0]], {
+      icon: vertexIcon,
+      draggable: true,
+    }).addTo(map);
+
+    marker.on('drag', (e) => {
+      const ll = e.target.getLatLng();
+      switchToPACustomMode();
+      state.paCustomCoords[i] = [ll.lng, ll.lat];
+      redraw();
+    });
+
+    marker.on('contextmenu', (e) => {
+      L.DomEvent.preventDefault(e);
+      L.DomEvent.stopPropagation(e);
+      switchToPACustomMode();
+      if (state.paCustomCoords.length > 3) {
+        state.paCustomCoords.splice(i, 1);
+        rebuildPAHandles();
+        redraw();
+        toast('Vertex deleted');
+      } else {
+        toast('Need at least 3 vertices');
+      }
+    });
+
+    paVertexMarkers.push(marker);
+  });
+
+  // Edge midpoint handles — click to insert a new vertex
+  for (let i = 0; i < coords.length; i++) {
+    const next = coords[(i + 1) % coords.length];
+    const mid = [(coords[i][0] + next[0]) / 2, (coords[i][1] + next[1]) / 2];
+
+    const marker = L.marker([mid[1], mid[0]], {
+      icon: midpointIcon,
+      draggable: false,
+    }).addTo(map);
+
+    const insertAfter = i;
+    marker.on('click', () => {
+      switchToPACustomMode();
+      state.paCustomCoords.splice(insertAfter + 1, 0, [mid[0], mid[1]]);
+      rebuildPAHandles();
+      redraw();
+      toast('Vertex added');
+    });
+
+    paMidpointMarkers.push(marker);
+  }
+}
+
+function updatePAHandlePositions() {
+  const coords = getPACoords();
+  if (paVertexMarkers.length !== coords.length) {
+    rebuildPAHandles();
+    return;
+  }
+  coords.forEach((c, i) => paVertexMarkers[i].setLatLng([c[1], c[0]]));
+  for (let i = 0; i < coords.length; i++) {
+    const next = coords[(i + 1) % coords.length];
+    const mid = [(coords[i][0] + next[0]) / 2, (coords[i][1] + next[1]) / 2];
+    paMidpointMarkers[i].setLatLng([mid[1], mid[0]]);
+  }
+}
+
+// Build a single connected safety envelope around TOLZ + PA, using
+// independent buffer distances for each. The approach:
+//   1. Buffer each shape with its own distance (rounds its corners)
+//   2. Take the convex hull of all points from both buffered shapes
+// Result: rounded ends at each shape's buffer distance, connected by
+// straight tangent lines — the "racetrack" envelope used in real plans.
+function computeSafetyBuffer(paPoly, tolzPoly, paBufferM, tolzBufferM) {
+  const paShape = paBufferM > 0
+    ? turf.buffer(paPoly, paBufferM / 1000, { units: 'kilometers', steps: 48 })
+    : paPoly;
+  const tolzShape = tolzBufferM > 0
+    ? turf.buffer(tolzPoly, tolzBufferM / 1000, { units: 'kilometers', steps: 48 })
+    : tolzPoly;
+
+  // Pull perimeter coordinates from each buffered shape (handle MultiPolygon
+  // edge cases by flattening). Slice removes the duplicate closing vertex.
+  function ringCoords(shape) {
+    if (!shape || !shape.geometry) return [];
+    if (shape.geometry.type === 'MultiPolygon') {
+      return shape.geometry.coordinates.flatMap(p => p[0].slice(0, -1));
+    }
+    return shape.geometry.coordinates[0].slice(0, -1);
+  }
+
+  const points = turf.featureCollection(
+    [...ringCoords(paShape), ...ringCoords(tolzShape)].map(p => turf.point(p))
+  );
+
+  return turf.convex(points);
+}
+
+// Miter offset: each source vertex maps to exactly one offset vertex placed
+// along the angle bisector at distance bufferM / cos(theta/2). The two edges
+// adjacent to that vertex are each perpendicular-distance bufferM from the
+// source edges, so they both touch the reference circle (radius bufferM
+// centered on the source vertex) tangentially — equal distance on both sides.
+// Uses local equirectangular meters around the polygon centroid.
+function offsetPolygonMiter(poly, distM, miterLimit = 10) {
+  const center = turf.centroid(poly).geometry.coordinates;
+  const latRad = center[1] * Math.PI / 180;
+  const mPerDegLat = 111320;
+  const mPerDegLng = 111320 * Math.cos(latRad);
+  const ring = poly.geometry.coordinates[0].slice(0, -1);
+  const pts = ring.map(([lng, lat]) => [
+    (lng - center[0]) * mPerDegLng,
+    (lat - center[1]) * mPerDegLat,
+  ]);
+
+  // Signed area → winding. CCW (area>0): interior on left, outward normal on right.
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i];
+    const [x2, y2] = pts[(i + 1) % pts.length];
+    area += x1 * y2 - x2 * y1;
+  }
+  const sign = area > 0 ? 1 : -1;
+
+  const n = pts.length;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const prev = pts[(i - 1 + n) % n];
+    const cur = pts[i];
+    const next = pts[(i + 1) % n];
+    const e1x = cur[0] - prev[0], e1y = cur[1] - prev[1];
+    const e2x = next[0] - cur[0], e2y = next[1] - cur[1];
+    const l1 = Math.hypot(e1x, e1y);
+    const l2 = Math.hypot(e2x, e2y);
+    if (l1 < 1e-9 || l2 < 1e-9) { out.push(cur.slice()); continue; }
+    const u1x = e1x / l1, u1y = e1y / l1;
+    const u2x = e2x / l2, u2y = e2y / l2;
+    // outward normals (right of edge direction for CCW)
+    const n1x = sign * u1y, n1y = -sign * u1x;
+    const n2x = sign * u2y, n2y = -sign * u2x;
+    const sx = n1x + n2x, sy = n1y + n2y;
+    const sLen = Math.hypot(sx, sy);
+    if (sLen < 1e-9) {
+      out.push([cur[0] + n1x * distM, cur[1] + n1y * distM]);
+      continue;
+    }
+    const mx = sx / sLen, my = sy / sLen;
+    const cosHalf = mx * n1x + my * n1y;
+    let mLen = distM / Math.max(Math.abs(cosHalf), 1e-6);
+    if (mLen > distM * miterLimit) mLen = distM * miterLimit;
+    // Sign: for convex outward turns cosHalf>0, push outward (positive).
+    // For concave (reflex) turns cosHalf<0, the bisector points inward; we still
+    // want the offset vertex on the outward side, so use signed length.
+    const signedLen = cosHalf >= 0 ? mLen : -mLen;
+    out.push([cur[0] + mx * signedLen, cur[1] + my * signedLen]);
+  }
+
+  // Ensure CCW winding for the outer ring (GeoJSON spec — turf.union requires it).
+  let outArea = 0;
+  for (let i = 0; i < out.length; i++) {
+    const [x1, y1] = out[i];
+    const [x2, y2] = out[(i + 1) % out.length];
+    outArea += x1 * y2 - x2 * y1;
+  }
+  if (outArea < 0) out.reverse();
+
+  const lngLatRing = out.map(([x, y]) => [
+    center[0] + x / mPerDegLng,
+    center[1] + y / mPerDegLat,
+  ]);
+  lngLatRing.push(lngLatRing[0]);
+  return turf.polygon([lngLatRing]);
+}
+
+// Build a geofence as the convex hull of the miter-offset PA and miter-offset
+// TOLZ vertices. The hull is always a single connected, convex outline — no
+// concave notches where the two buffers meet. Every hull vertex is a miter
+// vertex of its source polygon, so the tangency property (both adjacent
+// edges tangent to the source-vertex circle) is preserved at hull vertices
+// that come from the same source. Hull "bridge" edges between PA and TOLZ
+// vertices are common tangent lines connecting the two shapes.
+function computeGeofence(paPoly, tolzPoly, paBufferM, tolzBufferM) {
+  const paShape = paBufferM > 0 ? offsetPolygonMiter(paPoly, paBufferM) : paPoly;
+  const tolzShape = tolzBufferM > 0 ? offsetPolygonMiter(tolzPoly, tolzBufferM) : tolzPoly;
+  const allPts = [
+    ...paShape.geometry.coordinates[0].slice(0, -1),
+    ...tolzShape.geometry.coordinates[0].slice(0, -1),
+  ];
+  const hull = turf.convex(turf.featureCollection(allPts.map(p => turf.point(p))));
+  if (hull) return hull;
+  // Fallback only if convex hull fails for some reason.
+  return turf.multiPolygon([
+    [paShape.geometry.coordinates[0]],
+    [tolzShape.geometry.coordinates[0]],
+  ]);
+}
+
+// Convert a Polygon/MultiPolygon geofence to Leaflet's nested-array format
+// (multi-polygon → array of polygons; each polygon → array of rings).
+function geofenceToLeafletLatLngs(poly) {
+  if (!poly || !poly.geometry) return [];
+  const toLatLngRing = ring => ring.map(c => [c[1], c[0]]);
+  if (poly.geometry.type === 'MultiPolygon') {
+    return poly.geometry.coordinates.map(p => p.map(toLatLngRing));
+  }
+  return poly.geometry.coordinates.map(toLatLngRing);
+}
+
+// Compute the offset from origin → vertex in (X = North/South, Y = East/West) meters.
+//   North positive (X+), South negative (X-)
+//   East  positive (Y+), West  negative (Y-)
+function vertexOffsetFromOrigin(originLngLat, vertexLngLat) {
+  const distM = turf.distance(originLngLat, vertexLngLat, { units: 'meters' });
+  if (distM < 1e-6) return { x: 0, y: 0 };
+  const brg = turf.bearing(originLngLat, vertexLngLat); // degrees from North, -180..180
+  const rad = brg * Math.PI / 180;
+  return {
+    x: distM * Math.cos(rad),  // North/South component
+    y: distM * Math.sin(rad),  // East/West component
+  };
+}
+
+// Render the X/Y offsets from origin to each vertex of the active geofence(s).
+// Output is a single-line array of [X, Y] pairs per geofence, where:
+//   - X = North/South (north positive), Y = East/West (east positive)
+//   - Values are rounded to whole meters (≥0.5 rounds up, <0.5 rounds down)
+//   - Vertices are ordered CLOCKWISE starting from 12 o'clock (north of origin)
+function updateVertexReadout(primaryGfPoly, secondaryGfPoly) {
+  const el = document.getElementById('vertex-readout');
+  if (!el) return;
+
+  if (!state.origin) {
+    el.innerHTML = '';
+    return;
+  }
+  if (!primaryGfPoly && !secondaryGfPoly) {
+    el.innerHTML = '';
+    return;
+  }
+
+  const originLngLat = [state.origin.lng, state.origin.lat];
+
+  function ringVertices(poly) {
+    if (!poly || !poly.geometry) return [];
+    const rings = poly.geometry.type === 'MultiPolygon'
+      ? poly.geometry.coordinates.map(p => p[0])
+      : [poly.geometry.coordinates[0]];
+    // Concatenate vertices from every part, stripping each ring's duplicate closing vertex
+    return rings.flatMap(r => r.slice(0, -1));
+  }
+
+  // Convert each vertex to {x, y, bearing}, then sort by bearing clockwise
+  // from north (bearing 0 = 12 o'clock, increasing through east → south → west).
+  function orderedXY(verts) {
+    const items = verts.map(v => {
+      const distM = turf.distance(originLngLat, v, { units: 'meters' });
+      const brg = distM < 1e-6 ? 0 : turf.bearing(originLngLat, v); // -180..180
+      // Normalize to 0..360 (0 = north, 90 = east, 180 = south, 270 = west)
+      const brg360 = (brg + 360) % 360;
+      const rad = brg * Math.PI / 180;
+      return {
+        x: Math.round(distM * Math.cos(rad)), // North/South, whole meters
+        y: Math.round(distM * Math.sin(rad)), // East/West, whole meters
+        b: brg360,
+      };
+    });
+    items.sort((a, b) => a.b - b.b);
+    return items.map(p => `[${p.x}, ${p.y}]`).join(', ');
+  }
+
+  function renderSection(title, color, poly) {
+    const verts = ringVertices(poly);
+    if (verts.length === 0) return '';
+    const arrStr = `[${orderedXY(verts)}]`;
+    return `<div class="gf-section">
+      <div class="gf-label"><span class="swatch" style="background: ${color};"></span>${title}</div>
+      <div class="vertex-line">${arrStr}</div>
+    </div>`;
+  }
+
+  let html = '';
+  if (primaryGfPoly) html += renderSection('Primary Geofence', 'var(--primary-geofence)', primaryGfPoly);
+  if (secondaryGfPoly) html += renderSection('Secondary Geofence', 'var(--secondary-geofence)', secondaryGfPoly);
+  el.innerHTML = html;
+}
+function redraw() {
+  if (!state.audience || !state.paCenter || !state.tolz) return;
+
+  const paBearing = getPABearing();
+  const tolzBearing = getTOLZBearing();
+
+  // PA polygon — rectangle from L/W/center/bearing OR custom user-edited polygon
+  const paPoly = getPAPoly();
+  const paLatLngs = paPoly.geometry.coordinates[0].map(c => [c[1], c[0]]);
+  paLayer.setLatLngs(paLatLngs);
+  updatePAHandlePositions();
+
+  // TOLZ polygon (uses its own bearing — match PA or independent)
+  const tolzPoly = rectanglePolygon(
+    [state.tolz.lng, state.tolz.lat],
+    state.tolzLength,
+    state.tolzWidth,
+    tolzBearing
+  );
+  const tolzLatLngs = tolzPoly.geometry.coordinates[0].map(c => [c[1], c[0]]);
+  tolzLayer.setLatLngs(tolzLatLngs);
+
+  // Safety buffer: each shape buffered with its own distance, then unioned
+  const buffered = computeSafetyBuffer(paPoly, tolzPoly, state.paBufferDist, state.tolzBufferDist);
+
+  bufferLayer.clearLayers();
+  if (buffered) {
+    bufferLayer.addData(buffered);
+  }
+
+  // Geofences — use custom-edited rings if present, otherwise auto-compute.
+  let primaryGfPoly = null;
+  let secondaryGfPoly = null;
+  if (state.primaryGfEnabled) {
+    primaryGfPoly = state.primaryGfCustomCoords
+      ? ringsToGeofence(state.primaryGfCustomCoords)
+      : computeGeofence(paPoly, tolzPoly, state.primaryPaBuffer, state.primaryTolzBuffer);
+    primaryGeofenceLayer.setLatLngs(primaryGfPoly ? geofenceToLeafletLatLngs(primaryGfPoly) : []);
+  } else {
+    primaryGeofenceLayer.setLatLngs([]);
+  }
+
+  if (state.secondaryGfEnabled) {
+    secondaryGfPoly = state.secondaryGfCustomCoords
+      ? ringsToGeofence(state.secondaryGfCustomCoords)
+      : computeGeofence(paPoly, tolzPoly, state.secondaryPaBuffer, state.secondaryTolzBuffer);
+    secondaryGeofenceLayer.setLatLngs(secondaryGfPoly ? geofenceToLeafletLatLngs(secondaryGfPoly) : []);
+  } else {
+    secondaryGeofenceLayer.setLatLngs([]);
+  }
+
+  rebuildGeofenceHandles('primary');
+  rebuildGeofenceHandles('secondary');
+
+  // Reference circles at each PA/TOLZ vertex with radius = buffer distance.
+  // Geofence edges should be tangent to these circles.
+  drawReferenceCircles(paPoly, tolzPoly);
+
+  // Update the per-vertex distance readout (origin → each geofence vertex)
+  updateVertexReadout(primaryGfPoly, secondaryGfPoly);
+
+  // Connector
+  connectorLayer.setLatLngs([
+    [state.audience.lat, state.audience.lng],
+    [state.paCenter.lat, state.paCenter.lng]
+  ]);
+
+  // Sync rotation sliders in auto/match mode
+  if (state.rotationMode === 'auto') {
+    document.getElementById('rotation-slider').value = Math.round(paBearing);
+    document.getElementById('rotation-input').value = Math.round(paBearing);
+  }
+  if (state.tolzRotationMode === 'match') {
+    document.getElementById('tolz-rotation-slider').value = Math.round(tolzBearing);
+    document.getElementById('tolz-rotation-input').value = Math.round(tolzBearing);
+  }
+
+  // Readout
+  const paArea = turf.area(paPoly);
+  const tolzToPaDist = turf.distance(
+    [state.tolz.lng, state.tolz.lat],
+    [state.paCenter.lng, state.paCenter.lat],
+    { units: 'meters' }
+  );
+
+  // Distance from audience to the nearest edge of the PA polygon.
+  // Convert the polygon ring into a LineString and measure point-to-line distance.
+  const audPt = turf.point([state.audience.lng, state.audience.lat]);
+  const paRing = paPoly.geometry.coordinates[0];
+  const paLine = turf.lineString(paRing);
+  const audToPaFront = turf.pointToLineDistance(audPt, paLine, { units: 'meters' });
+
+  document.getElementById('r-pa').textContent = `${paArea.toFixed(0)} m²`;
+  document.getElementById('r-drones-30').textContent = Math.floor(paArea / 30).toLocaleString();
+  document.getElementById('r-drones-20').textContent = Math.floor(paArea / 20).toLocaleString();
+  document.getElementById('r-bearing').textContent = `${audToPaFront.toFixed(1)} m`;
+  document.getElementById('r-dist').textContent = `${tolzToPaDist.toFixed(1)} m`;
+}
+
+// ===== inputs =====
+function bindNumber(id, key, isInt = false) {
+  const el = document.getElementById(id);
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value);
+    if (!isNaN(v) && v >= 0) {
+      state[key] = isInt ? Math.round(v) : v;
+      redraw();
+    }
+  });
+}
+
+bindNumber('pa-length', 'paLength');
+bindNumber('pa-width', 'paWidth');
+bindNumber('pa-height', 'paHeight');
+bindNumber('tolz-length', 'tolzLength');
+bindNumber('tolz-width', 'tolzWidth');
+bindNumber('tolz-cols', 'tolzCols', true);
+bindNumber('tolz-rows', 'tolzRows', true);
+bindNumber('tolz-sep-x', 'tolzSepX');
+bindNumber('tolz-sep-y', 'tolzSepY');
+bindNumber('pa-buffer-dist', 'paBufferDist');
+bindNumber('tolz-buffer-dist', 'tolzBufferDist');
+// Buffer changes invalidate custom-edited rings (the new buffer would be
+// meaningless against stale geometry). Bind directly so we can clear first.
+function bindGfBuffer(elId, stateKey, which) {
+  const el = document.getElementById(elId);
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value);
+    if (!isNaN(v)) {
+      state[stateKey] = v;
+      const customKey = gfCustomKey(which);
+      if (state[customKey]) {
+        state[customKey] = null;
+        document.getElementById(`btn-reset-${which}-gf`).classList.remove('visible');
+      }
+      redraw();
+    }
+  });
+}
+bindGfBuffer('primary-pa-buffer', 'primaryPaBuffer', 'primary');
+bindGfBuffer('primary-tolz-buffer', 'primaryTolzBuffer', 'primary');
+bindGfBuffer('secondary-pa-buffer', 'secondaryPaBuffer', 'secondary');
+bindGfBuffer('secondary-tolz-buffer', 'secondaryTolzBuffer', 'secondary');
+
+document.getElementById('btn-reset-primary-gf').addEventListener('click', () => resetGfToAuto('primary'));
+document.getElementById('btn-reset-secondary-gf').addEventListener('click', () => resetGfToAuto('secondary'));
+
+// PA rotation mode toggles
+document.querySelectorAll('.toggle-btn[data-pa-mode]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.toggle-btn[data-pa-mode]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.rotationMode = btn.dataset.paMode;
+    if (state.rotationMode === 'manual') {
+      state.manualRotation = Math.round(getPABearing());
+      document.getElementById('rotation-slider').value = state.manualRotation;
+      document.getElementById('rotation-input').value = state.manualRotation;
+    }
+    redraw();
+  });
+});
+
+// TOLZ rotation mode toggles
+document.querySelectorAll('.toggle-btn[data-tolz-mode]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.toggle-btn[data-tolz-mode]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.tolzRotationMode = btn.dataset.tolzMode;
+    if (state.tolzRotationMode === 'manual') {
+      state.tolzManualRotation = Math.round(getTOLZBearing());
+      document.getElementById('tolz-rotation-slider').value = state.tolzManualRotation;
+      document.getElementById('tolz-rotation-input').value = state.tolzManualRotation;
+    }
+    redraw();
+  });
+});
+
+function activatePAManual() {
+  if (state.rotationMode !== 'manual') {
+    document.querySelector('.toggle-btn[data-pa-mode="manual"]').click();
+  }
+}
+
+function activateTOLZManual() {
+  if (state.tolzRotationMode !== 'manual') {
+    document.querySelector('.toggle-btn[data-tolz-mode="manual"]').click();
+  }
+}
+
+// PA rotation controls
+const rotSlider = document.getElementById('rotation-slider');
+const rotInput = document.getElementById('rotation-input');
+
+rotSlider.addEventListener('input', () => {
+  activatePAManual();
+  state.manualRotation = parseInt(rotSlider.value);
+  rotInput.value = state.manualRotation;
+  redraw();
+});
+
+rotInput.addEventListener('input', () => {
+  let v = parseInt(rotInput.value);
+  if (isNaN(v)) return;
+  v = ((v % 360) + 360) % 360;
+  activatePAManual();
+  state.manualRotation = v;
+  rotSlider.value = v;
+  redraw();
+});
+
+document.getElementById('rot-minus').addEventListener('click', () => {
+  activatePAManual();
+  state.manualRotation = ((state.manualRotation - 90) % 360 + 360) % 360;
+  rotSlider.value = state.manualRotation;
+  rotInput.value = state.manualRotation;
+  redraw();
+});
+
+document.getElementById('rot-plus').addEventListener('click', () => {
+  activatePAManual();
+  state.manualRotation = ((state.manualRotation + 90) % 360) % 360;
+  rotSlider.value = state.manualRotation;
+  rotInput.value = state.manualRotation;
+  redraw();
+});
+
+// TOLZ rotation controls
+const tolzRotSlider = document.getElementById('tolz-rotation-slider');
+const tolzRotInput = document.getElementById('tolz-rotation-input');
+
+tolzRotSlider.addEventListener('input', () => {
+  activateTOLZManual();
+  state.tolzManualRotation = parseInt(tolzRotSlider.value);
+  tolzRotInput.value = state.tolzManualRotation;
+  redraw();
+});
+
+tolzRotInput.addEventListener('input', () => {
+  let v = parseInt(tolzRotInput.value);
+  if (isNaN(v)) return;
+  v = ((v % 360) + 360) % 360;
+  activateTOLZManual();
+  state.tolzManualRotation = v;
+  tolzRotSlider.value = v;
+  redraw();
+});
+
+document.getElementById('tolz-rot-minus').addEventListener('click', () => {
+  activateTOLZManual();
+  state.tolzManualRotation = ((state.tolzManualRotation - 90) % 360 + 360) % 360;
+  tolzRotSlider.value = state.tolzManualRotation;
+  tolzRotInput.value = state.tolzManualRotation;
+  redraw();
+});
+
+document.getElementById('tolz-rot-plus').addEventListener('click', () => {
+  activateTOLZManual();
+  state.tolzManualRotation = ((state.tolzManualRotation + 90) % 360) % 360;
+  tolzRotSlider.value = state.tolzManualRotation;
+  tolzRotInput.value = state.tolzManualRotation;
+  redraw();
+});
+
+// ===== actions =====
+document.getElementById('btn-reset-pa').addEventListener('click', () => {
+  resetPAToRectangle();
+  toast('PA reset to rectangle');
+});
+
+// Hide the prominent launch button and swap help text once the template
+// has been placed (called after Reset, Recenter, or Let's Goooo!).
+function markTemplatePlaced() {
+  document.getElementById('btn-launch').classList.add('hidden');
+  document.getElementById('map-overlay').innerHTML =
+    '<strong>Drag</strong> the orange center to move shapes. <strong>Drag</strong> green vertex dots to reshape the PA. <strong>Click</strong> a midpoint dot to add a vertex. <strong>Right-click</strong> a vertex to delete.';
+}
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  document.getElementById('pa-length').value = 60;
+  document.getElementById('pa-width').value = 40;
+  document.getElementById('pa-height').value = 150;
+  document.getElementById('tolz-length').value = 10;
+  document.getElementById('tolz-width').value = 10;
+  document.getElementById('tolz-cols').value = 13;
+  document.getElementById('tolz-rows').value = 13;
+  document.getElementById('tolz-sep-x').value = 0.8;
+  document.getElementById('tolz-sep-y').value = 0.8;
+  document.getElementById('pa-buffer-dist').value = 30;
+  document.getElementById('tolz-buffer-dist').value = 30;
+  state.paLength = 60;
+  state.paWidth = 40;
+  state.paHeight = 150;
+  state.tolzLength = 10;
+  state.tolzWidth = 10;
+  state.tolzCols = 13;
+  state.tolzRows = 13;
+  state.tolzSepX = 0.8;
+  state.tolzSepY = 0.8;
+  state.paBufferDist = 30;
+  state.tolzBufferDist = 30;
+  state.rotationMode = 'auto';
+  state.tolzRotationMode = 'match';
+  state.manualRotation = 0;
+  state.tolzManualRotation = 0;
+  state.paIsCustom = false;
+  state.paCustomCoords = null;
+  state.primaryGfCustomCoords = null;
+  state.secondaryGfCustomCoords = null;
+  document.getElementById('btn-reset-primary-gf').classList.remove('visible');
+  document.getElementById('btn-reset-secondary-gf').classList.remove('visible');
+
+  document.querySelectorAll('.toggle-btn[data-pa-mode]').forEach(b => b.classList.remove('active'));
+  document.querySelector('.toggle-btn[data-pa-mode="auto"]').classList.add('active');
+  document.querySelectorAll('.toggle-btn[data-tolz-mode]').forEach(b => b.classList.remove('active'));
+  document.querySelector('.toggle-btn[data-tolz-mode="match"]').classList.add('active');
+
+  initFromMapCenter();
+  updatePAControlsDisabled();
+  rebuildPAHandles();
+  redraw();
+  markTemplatePlaced();
+  toast('Reset to defaults');
+});
+
+document.getElementById('btn-recenter').addEventListener('click', () => {
+  initFromMapCenter();
+  state.paIsCustom = false;
+  state.paCustomCoords = null;
+  updatePAControlsDisabled();
+  rebuildPAHandles();
+  redraw();
+  markTemplatePlaced();
+  toast('Markers recentered to current view');
+});
+
+// ===== reference lines (not exported) =====
+const referenceLines = [];
+let isDrawingLine = false;
+let currentLineLayer = null;
+let currentLinePoints = [];
+
+function startLineDrawing() {
+  if (isDrawingLine) return;
+  isDrawingLine = true;
+  currentLinePoints = [];
+  currentLineLayer = L.polyline([], {
+    color: '#60a5fa',
+    weight: 2,
+    opacity: 0.95,
+    interactive: false,
+  }).addTo(map);
+
+  document.querySelector('.map-wrap').classList.add('drawing-mode');
+  document.getElementById('btn-draw-line').classList.add('active');
+
+  map.on('click', addLinePoint);
+  map.on('mousemove', updateLineCursor);
+  document.addEventListener('keydown', handleLineKey);
+
+  toast('Click two points to draw a line · Esc to cancel');
+}
+
+function addLinePoint(e) {
+  currentLinePoints.push([e.latlng.lat, e.latlng.lng]);
+  currentLineLayer.setLatLngs(currentLinePoints);
+
+  // 2-point lines only — finish automatically on second click
+  if (currentLinePoints.length >= 2) {
+    finishLine();
+  }
+}
+
+function updateLineCursor(e) {
+  if (currentLinePoints.length === 0) return;
+  currentLineLayer.setLatLngs([...currentLinePoints, [e.latlng.lat, e.latlng.lng]]);
+}
+
+function finishLine() {
+  if (currentLinePoints.length < 2) {
+    if (currentLineLayer) map.removeLayer(currentLineLayer);
+    stopLineDrawing();
+    return;
+  }
+
+  // Replace the live preview layer with a final, interactive one
+  if (currentLineLayer) map.removeLayer(currentLineLayer);
+  const finalLayer = L.polyline(currentLinePoints, {
+    color: '#60a5fa',
+    weight: 2,
+    opacity: 0.95,
+  }).addTo(map);
+
+  finalLayer.on('contextmenu', (ev) => {
+    L.DomEvent.preventDefault(ev);
+    L.DomEvent.stopPropagation(ev);
+    map.removeLayer(finalLayer);
+    const idx = referenceLines.indexOf(finalLayer);
+    if (idx >= 0) referenceLines.splice(idx, 1);
+    toast('Reference line deleted');
+  });
+
+  referenceLines.push(finalLayer);
+
+  const totalM = turf.distance(
+    [currentLinePoints[0][1], currentLinePoints[0][0]],
+    [currentLinePoints[1][1], currentLinePoints[1][0]],
+    { units: 'meters' }
+  );
+  toast(`Line saved · ${totalM.toFixed(1)} m`);
+  stopLineDrawing();
+}
+
+function stopLineDrawing() {
+  isDrawingLine = false;
+  currentLineLayer = null;
+  currentLinePoints = [];
+
+  document.querySelector('.map-wrap').classList.remove('drawing-mode');
+  document.getElementById('btn-draw-line').classList.remove('active');
+
+  map.off('click', addLinePoint);
+  map.off('mousemove', updateLineCursor);
+  document.removeEventListener('keydown', handleLineKey);
+}
+
+function handleLineKey(e) {
+  if (!isDrawingLine) return;
+  if (e.key === 'Escape') {
+    if (currentLineLayer) map.removeLayer(currentLineLayer);
+    stopLineDrawing();
+    toast('Line drawing cancelled');
+  }
+}
+
+document.getElementById('btn-draw-line').addEventListener('click', () => {
+  if (isDrawingLine) {
+    // Cancel mid-draw
+    if (currentLineLayer) map.removeLayer(currentLineLayer);
+    stopLineDrawing();
+    toast('Line drawing cancelled');
+  } else {
+    startLineDrawing();
+  }
+});
+
+document.getElementById('btn-clear-lines').addEventListener('click', () => {
+  if (referenceLines.length === 0) {
+    toast('No lines to clear');
+    return;
+  }
+  referenceLines.forEach(l => map.removeLayer(l));
+  referenceLines.length = 0;
+  toast('All reference lines cleared');
+});
+
+// ===== KML export =====
+function buildKML() {
+  const tolzBearing = getTOLZBearing();
+  const paPoly = getPAPoly();
+  const paBearing = getPABearing();
+  const tolzPoly = rectanglePolygon([state.tolz.lng, state.tolz.lat], state.tolzLength, state.tolzWidth, tolzBearing);
+  const buffered = computeSafetyBuffer(paPoly, tolzPoly, state.paBufferDist, state.tolzBufferDist);
+
+  // Geofences (only if enabled — origin is no longer required). Use custom-
+  // edited rings if the user has dragged vertices, otherwise auto-compute.
+  const primaryGf = state.primaryGfEnabled
+    ? (state.primaryGfCustomCoords
+        ? ringsToGeofence(state.primaryGfCustomCoords)
+        : computeGeofence(paPoly, tolzPoly, state.primaryPaBuffer, state.primaryTolzBuffer))
+    : null;
+  const secondaryGf = state.secondaryGfEnabled
+    ? (state.secondaryGfCustomCoords
+        ? ringsToGeofence(state.secondaryGfCustomCoords)
+        : computeGeofence(paPoly, tolzPoly, state.secondaryPaBuffer, state.secondaryTolzBuffer))
+    : null;
+
+  // Pin centers — use the EXACT center used to build the rectangle (avoids
+  // centerOfMass drift caused by great-circle corner computation).
+  const paCenter = state.paIsCustom
+    ? turf.centerOfMass(paPoly).geometry.coordinates
+    : [state.paCenter.lng, state.paCenter.lat];
+  const tolzCenter = [state.tolz.lng, state.tolz.lat];
+  const audienceCoord = [state.audience.lng, state.audience.lat];
+  const sbPinLoc = computeSBPinLocation(buffered, paCenter, audienceCoord, paPoly, tolzCenter);
+
+  function coordsToKML(coords) {
+    return coords.map(c => `${c[0]},${c[1]},0`).join(' ');
+  }
+
+  function singlePolyXml(rings) {
+    return `      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>${coordsToKML(rings[0])}</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>`;
+  }
+
+  function pinPlacemark(name, styleId, lngLat) {
+    return `    <Placemark>
+      <name>${name}</name>
+      <styleUrl>#${styleId}</styleUrl>
+      <Point>
+        <coordinates>${lngLat[0]},${lngLat[1]},0</coordinates>
+      </Point>
+    </Placemark>`;
+  }
+
+  function polyPlacemark(name, styleId, polygon, description) {
+    if (!polygon || !polygon.geometry) return '';
+    const descXml = description
+      ? `\n      <description><![CDATA[${description}]]></description>`
+      : '';
+    if (polygon.geometry.type === 'MultiPolygon') {
+      const polysXml = polygon.geometry.coordinates.map(singlePolyXml).join('\n');
+      return `    <Placemark>
+      <name>${name}</name>${descXml}
+      <styleUrl>#${styleId}</styleUrl>
+      <MultiGeometry>
+${polysXml}
+      </MultiGeometry>
+    </Placemark>`;
+    }
+    return `    <Placemark>
+      <name>${name}</name>${descXml}
+      <styleUrl>#${styleId}</styleUrl>
+${singlePolyXml(polygon.geometry.coordinates)}
+    </Placemark>`;
+  }
+
+  // Build descriptions
+  const tolzDesc = `Dimension: ${state.tolzLength}m x ${state.tolzWidth}m (${state.tolzCols}C x ${state.tolzRows}R // ${state.tolzSepX}m:${state.tolzSepY}m separation)`;
+  // For PA: Width (along bearing axis = paLength), Depth (perpendicular = paWidth), plus Height.
+  // If the user has switched to a custom polygon, dimensions become ambiguous —
+  // fall back to bounding-box dimensions in meters.
+  let paDescDims;
+  if (state.paIsCustom) {
+    // Custom polygon: report bounding box width × depth
+    const bbox = turf.bbox(paPoly); // [minX, minY, maxX, maxY]
+    const widthM = turf.distance([bbox[0], bbox[1]], [bbox[2], bbox[1]], { units: 'meters' });
+    const depthM = turf.distance([bbox[0], bbox[1]], [bbox[0], bbox[3]], { units: 'meters' });
+    paDescDims = `${widthM.toFixed(0)}m Width x ${depthM.toFixed(0)}m Depth (custom polygon)`;
+  } else {
+    paDescDims = `${state.paLength}m Width x ${state.paWidth}m Depth`;
+  }
+  const paDesc = `Dimension: ${paDescDims} x ${state.paHeight}m Height`;
+
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+
+  // KML colors are AABBGGRR (alpha + blue + green + red).
+  // CSS #00ff00 (PA green)    -> R=00 G=ff B=00 -> KML: AA + 00 + ff + 00
+  // CSS #a020f0 (TOLZ purple) -> R=a0 G=20 B=f0 -> KML: AA + f0 + 20 + a0
+  // CSS #ef4444 (Buffer red)  -> R=ef G=44 B=44 -> KML: AA + 44 + 44 + ef
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Flight Plan ${ts}</name>
+    <description></description>
+
+    <Style id="paIconStyle">
+      <IconStyle>
+        <scale>1.1</scale>
+        <Icon><href>http://maps.google.com/mapfiles/kml/paddle/grn-stars.png</href></Icon>
+        <hotSpot x="0.5" y="0.0" xunits="fraction" yunits="fraction"/>
+      </IconStyle>
+      <LabelStyle><scale>0.9</scale></LabelStyle>
+    </Style>
+    <Style id="paPolyStyle">
+      <LineStyle><color>ff00ff00</color><width>2</width></LineStyle>
+      <PolyStyle><color>8000ff00</color></PolyStyle>
+    </Style>
+
+    <Style id="tolzIconStyle">
+      <IconStyle>
+        <scale>1.1</scale>
+        <Icon><href>http://maps.google.com/mapfiles/kml/paddle/purple-stars.png</href></Icon>
+        <hotSpot x="0.5" y="0.0" xunits="fraction" yunits="fraction"/>
+      </IconStyle>
+      <LabelStyle><scale>0.9</scale></LabelStyle>
+    </Style>
+    <Style id="tolzPolyStyle">
+      <LineStyle><color>fff020a0</color><width>2</width></LineStyle>
+      <PolyStyle><color>80f020a0</color></PolyStyle>
+    </Style>
+
+    <Style id="bufferIconStyle">
+      <IconStyle>
+        <scale>1.1</scale>
+        <Icon><href>http://maps.google.com/mapfiles/kml/paddle/red-stars.png</href></Icon>
+        <hotSpot x="0.5" y="0.0" xunits="fraction" yunits="fraction"/>
+      </IconStyle>
+      <LabelStyle><scale>0.9</scale></LabelStyle>
+    </Style>
+    <Style id="bufferPolyStyle">
+      <LineStyle><color>ff4444ef</color><width>2</width></LineStyle>
+      <PolyStyle><fill>0</fill><outline>1</outline></PolyStyle>
+    </Style>
+
+    <Style id="audienceStyle">
+      <IconStyle>
+        <scale>1.1</scale>
+        <Icon><href>http://maps.google.com/mapfiles/kml/paddle/ylw-stars.png</href></Icon>
+        <hotSpot x="0.5" y="0.0" xunits="fraction" yunits="fraction"/>
+      </IconStyle>
+      <LabelStyle><scale>0.9</scale></LabelStyle>
+    </Style>
+
+    <Style id="primaryGfStyle">
+      <LineStyle><color>fff6823b</color><width>2</width></LineStyle>
+      <PolyStyle><fill>0</fill><outline>1</outline></PolyStyle>
+    </Style>
+    <Style id="secondaryGfStyle">
+      <LineStyle><color>ff15ccfa</color><width>2</width></LineStyle>
+      <PolyStyle><fill>0</fill><outline>1</outline></PolyStyle>
+    </Style>
+    <Style id="originStyle">
+      <IconStyle>
+        <scale>1.1</scale>
+        <Icon><href>http://maps.google.com/mapfiles/kml/paddle/orange-circle.png</href></Icon>
+        <hotSpot x="0.5" y="0.0" xunits="fraction" yunits="fraction"/>
+      </IconStyle>
+      <LabelStyle><scale>0.9</scale></LabelStyle>
+    </Style>
+
+${pinPlacemark('Safety Buffer', 'bufferIconStyle', sbPinLoc)}
+${polyPlacemark('Safety Buffer', 'bufferPolyStyle', buffered, `Buffer: ${state.paBufferDist}m around PA / ${state.tolzBufferDist}m around TOLZ`)}
+${polyPlacemark('Primary Geofence', 'primaryGfStyle', primaryGf)}
+${polyPlacemark('Secondary Geofence', 'secondaryGfStyle', secondaryGf)}
+${pinPlacemark('Performance Area', 'paIconStyle', paCenter)}
+${polyPlacemark('Performance Area', 'paPolyStyle', paPoly, paDesc)}
+${pinPlacemark('TOLZ', 'tolzIconStyle', tolzCenter)}
+${polyPlacemark('TOLZ', 'tolzPolyStyle', tolzPoly, tolzDesc)}
+${state.origin ? `    <Placemark>
+      <name>Origin</name>
+      <styleUrl>#originStyle</styleUrl>
+      <Point>
+        <coordinates>${state.origin.lng},${state.origin.lat},0</coordinates>
+      </Point>
+    </Placemark>` : ''}
+    <Placemark>
+      <name>Audience</name>
+      <styleUrl>#audienceStyle</styleUrl>
+      <Point>
+        <coordinates>${state.audience.lng},${state.audience.lat},0</coordinates>
+      </Point>
+    </Placemark>
+  </Document>
+</kml>`;
+}
+
+// Place the Safety Buffer pin to the SIDE of the PA — perpendicular to the
+// PA→Audience axis, on whichever side is FARTHER from the TOLZ. Halfway between
+// the PA's side edge and the Safety Buffer's outer edge.
+function computeSBPinLocation(buffered, paCenter, audienceCoord, paPoly, tolzCenter) {
+  // Audience direction (forward axis)
+  const ax = audienceCoord[0] - paCenter[0];
+  const ay = audienceCoord[1] - paCenter[1];
+  const aLen = Math.sqrt(ax * ax + ay * ay);
+  if (aLen < 1e-9) {
+    return turf.centerOfMass(buffered).geometry.coordinates;
+  }
+
+  // Two perpendicular candidates: rotate audience direction +90° and -90°
+  const rightX = ay / aLen;
+  const rightY = -ax / aLen;
+  const leftX = -ay / aLen;
+  const leftY = ax / aLen;
+
+  // Pick whichever perpendicular points AWAY from the TOLZ.
+  // Vector from PA center to TOLZ:
+  const tx = tolzCenter[0] - paCenter[0];
+  const ty = tolzCenter[1] - paCenter[1];
+  // The "away from TOLZ" side has a negative dot product with the TOLZ direction.
+  const rightDot = rightX * tx + rightY * ty;
+  const leftDot = leftX * tx + leftY * ty;
+  // Choose the side with the smaller (more negative) dot product = farther from TOLZ
+  let dirX, dirY;
+  if (rightDot < leftDot) {
+    dirX = rightX;
+    dirY = rightY;
+  } else {
+    dirX = leftX;
+    dirY = leftY;
+  }
+
+  function ringOuter(feat) {
+    if (!feat || !feat.geometry) return [];
+    if (feat.geometry.type === 'MultiPolygon') return feat.geometry.coordinates[0][0];
+    return feat.geometry.coordinates[0];
+  }
+
+  const rayLen = 0.05;
+  const rayEnd = [paCenter[0] + dirX * rayLen, paCenter[1] + dirY * rayLen];
+
+  function rayHitDistance(ringCoords) {
+    let bestT = 0;
+    for (let i = 0; i < ringCoords.length - 1; i++) {
+      const a = ringCoords[i];
+      const b = ringCoords[i + 1];
+      const t = raySegmentIntersection(paCenter, rayEnd, a, b);
+      if (t !== null && t > bestT) bestT = t;
+    }
+    return bestT;
+  }
+
+  function raySegmentIntersection(p, q, a, b) {
+    const rx = q[0] - p[0], ry = q[1] - p[1];
+    const sx = b[0] - a[0], sy = b[1] - a[1];
+    const denom = rx * sy - ry * sx;
+    if (Math.abs(denom) < 1e-15) return null;
+    const t = ((a[0] - p[0]) * sy - (a[1] - p[1]) * sx) / denom;
+    const u = ((a[0] - p[0]) * ry - (a[1] - p[1]) * rx) / denom;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return t;
+    return null;
+  }
+
+  const paT = rayHitDistance(ringOuter(paPoly));
+  const sbT = rayHitDistance(ringOuter(buffered));
+
+  if (paT === 0 || sbT === 0 || sbT <= paT) {
+    return turf.centerOfMass(buffered).geometry.coordinates;
+  }
+  const midT = (paT + sbT) / 2;
+  return [paCenter[0] + dirX * rayLen * midT, paCenter[1] + dirY * rayLen * midT];
+}
+
+document.getElementById('btn-export').addEventListener('click', () => {
+  const kml = buildKML();
+  const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  a.download = `flight-plan-${ts}.kml`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('KML exported — open in Google Earth Pro');
+});
+
+// ===== KML import =====
+
+// Parse a KML coordinates string. KML format is whitespace-separated tuples
+// of "lng,lat[,alt]" — but real-world files often have inconsistent whitespace
+// (newlines mid-tuple, trailing commas, etc). We split on any whitespace,
+// rejoin, then split on commas, and pair them up two at a time.
+function parseKMLCoordsString(str) {
+  // Strip all whitespace, then we have a string like "lng,lat,alt,lng,lat,alt,..."
+  const compact = str.replace(/\s+/g, '');
+  // But sometimes alt is missing for some triplets. Handle by splitting on
+  // comma and reading triplets of varying length. Safer: split on any
+  // newline/space FIRST to get tuples, then commas within.
+  const tuples = str.trim().split(/\s+/).filter(Boolean);
+  const out = [];
+  for (const t of tuples) {
+    const parts = t.split(',').map(s => parseFloat(s));
+    if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+      out.push([parts[0], parts[1]]);
+    }
+  }
+  return out;
+}
+
+// Find the first <Placemark> whose <name> matches `name` (case-insensitive,
+// substring match — so "Performance Area (1125 Drones)" matches "Performance Area").
+function findPlacemarkByName(doc, name) {
+  const placemarks = doc.getElementsByTagName('Placemark');
+  const needle = name.toLowerCase();
+  for (let i = 0; i < placemarks.length; i++) {
+    const nameEl = placemarks[i].getElementsByTagName('name')[0];
+    if (nameEl && nameEl.textContent.trim().toLowerCase().includes(needle)) {
+      return placemarks[i];
+    }
+  }
+  return null;
+}
+
+// Find ALL Placemarks whose name contains a keyword (case-insensitive substring).
+// Tool exports two per shape (icon + polygon). We want both so we can pick
+// the polygon-bearing one. Also handles renamed exports like "TOLZ Fleet A".
+function findAllPlacemarksByName(doc, name) {
+  const placemarks = doc.getElementsByTagName('Placemark');
+  const needle = name.toLowerCase();
+  const matches = [];
+  for (let i = 0; i < placemarks.length; i++) {
+    const nameEl = placemarks[i].getElementsByTagName('name')[0];
+    if (nameEl && nameEl.textContent.trim().toLowerCase().includes(needle)) {
+      matches.push(placemarks[i]);
+    }
+  }
+  return matches;
+}
+
+// List every placemark name in the doc — used for debug error messages so
+// the user can see what's actually in the file when import fails.
+function listAllPlacemarkNames(doc) {
+  const placemarks = doc.getElementsByTagName('Placemark');
+  const names = [];
+  for (let i = 0; i < placemarks.length; i++) {
+    const nameEl = placemarks[i].getElementsByTagName('name')[0];
+    if (nameEl) names.push(nameEl.textContent.trim());
+  }
+  return names;
+}
+
+// Extract polygon ring(s) from a Placemark. Returns an array of rings,
+// each an array of [lng, lat]. Handles both <Polygon> and <MultiGeometry>.
+function extractPolygonRings(placemark) {
+  const rings = [];
+  const polys = placemark.getElementsByTagName('Polygon');
+  for (let i = 0; i < polys.length; i++) {
+    const coords = polys[i].getElementsByTagName('coordinates')[0];
+    if (coords) {
+      const ring = parseKMLCoordsString(coords.textContent);
+      if (ring.length >= 3) rings.push(ring);
+    }
+  }
+  return rings;
+}
+
+// Extract the single point from a Placemark's <Point>.
+function extractPoint(placemark) {
+  const point = placemark.getElementsByTagName('Point')[0];
+  if (!point) return null;
+  const coords = point.getElementsByTagName('coordinates')[0];
+  if (!coords) return null;
+  const pts = parseKMLCoordsString(coords.textContent);
+  return pts[0] || null;
+}
+
+// Extract description text from a Placemark (CDATA-aware via textContent).
+function extractDescription(placemark) {
+  const desc = placemark.getElementsByTagName('description')[0];
+  return desc ? desc.textContent.trim() : '';
+}
+
+// Detect if 4 corners form a rectangle (within tolerance). If so, recover
+// {center, length, width, bearing}. Returns null if not a rectangle.
+//
+// This is order-agnostic: works regardless of which corner is "first" or
+// whether the winding is clockwise or counter-clockwise. We simply require
+// that opposite sides match in length within tolerance, then identify the
+// "length" axis as the longer of the two distinct side groups.
+function recoverRectangleParams(corners) {
+  if (corners.length !== 4) return null;
+
+  // Compute centroid (average of all 4 corners)
+  const cLng = corners.reduce((s, c) => s + c[0], 0) / 4;
+  const cLat = corners.reduce((s, c) => s + c[1], 0) / 4;
+  const center = [cLng, cLat];
+
+  // Side lengths in meters — sides are corners[i] -> corners[i+1]
+  const sides = [];
+  for (let i = 0; i < 4; i++) {
+    const a = corners[i];
+    const b = corners[(i + 1) % 4];
+    sides.push(turf.distance(a, b, { units: 'meters' }));
+  }
+
+  // Rectangle invariant: opposite sides equal (sides 0&2, sides 1&3).
+  const tol = 0.05;
+  const opp1Match = Math.abs(sides[0] - sides[2]) / Math.max(sides[0], sides[2]) < tol;
+  const opp2Match = Math.abs(sides[1] - sides[3]) / Math.max(sides[1], sides[3]) < tol;
+  if (!opp1Match || !opp2Match) return null;
+
+  // Two distinct side lengths
+  const sideA = (sides[0] + sides[2]) / 2;  // bearing axis is corners[0]→corners[1] direction
+  const sideB = (sides[1] + sides[3]) / 2;  // bearing axis is corners[1]→corners[2] direction
+
+  // The length axis is the LONGER side in our convention (rectanglePolygon
+  // builds with paLength as the bearing-axis dimension; longer = "length").
+  let length, width, bearingDirCorners;
+  if (sideA >= sideB) {
+    length = sideA;
+    width = sideB;
+    bearingDirCorners = [corners[0], corners[1]];
+  } else {
+    length = sideB;
+    width = sideA;
+    bearingDirCorners = [corners[1], corners[2]];
+  }
+
+  // Bearing of the length axis. turf.bearing returns -180..180; normalize.
+  let bearing = (turf.bearing(bearingDirCorners[0], bearingDirCorners[1]) + 360) % 360;
+
+  return { center, length, width, bearing };
+}
+
+// Parse a TOLZ description string of form:
+//   "Dimension: 50m x 30m (50C x 34R // 0.8m:0.8m separation)"
+// Returns { length, width, cols, rows, sepX, sepY } or partial object.
+function parseTolzDescription(desc) {
+  const out = {};
+  const mDim = desc.match(/Dimension:\s*([\d.]+)m\s*x\s*([\d.]+)m/i);
+  if (mDim) {
+    out.length = parseFloat(mDim[1]);
+    out.width = parseFloat(mDim[2]);
+  }
+  const mCR = desc.match(/(\d+)\s*C\s*x\s*(\d+)\s*R/i);
+  if (mCR) {
+    out.cols = parseInt(mCR[1]);
+    out.rows = parseInt(mCR[2]);
+  }
+  const mSep = desc.match(/([\d.]+)m\s*[:x]\s*([\d.]+)m\s*separation/i);
+  if (mSep) {
+    out.sepX = parseFloat(mSep[1]);
+    out.sepY = parseFloat(mSep[2]);
+  }
+  return out;
+}
+
+// Parse a PA description string of form:
+//   "Dimension: 200m Width x 150m Depth x 150m Height"
+// Returns { width, depth, height } or partial object.
+function parsePaDescription(desc) {
+  const out = {};
+  const mWD = desc.match(/([\d.]+)m\s*Width\s*x\s*([\d.]+)m\s*Depth/i);
+  if (mWD) {
+    out.width = parseFloat(mWD[1]);
+    out.depth = parseFloat(mWD[2]);
+  }
+  const mH = desc.match(/x\s*([\d.]+)m\s*Height/i);
+  if (mH) out.height = parseFloat(mH[1]);
+  return out;
+}
+
+// Safety Buffer description format (from export):
+//   "Buffer: 30m around PA / 25m around TOLZ"
+function parseSafetyBufferDescription(desc) {
+  const out = {};
+  const m = desc.match(/Buffer:\s*([\d.]+)\s*m\s*around\s*PA\s*\/\s*([\d.]+)\s*m\s*around\s*TOLZ/i);
+  if (m) {
+    out.paBufferDist = parseFloat(m[1]);
+    out.tolzBufferDist = parseFloat(m[2]);
+  }
+  return out;
+}
+
+// Recover PA / TOLZ buffer distances from the safety-buffer geometry by
+// measuring the PERPENDICULAR distance from every safety-buffer vertex to
+// each source-polygon edge (PA outline / TOLZ outline). For any vertex that
+// sits on the PA-side of the safety buffer outline, perpendicular distance
+// to PA = paBufferDist; perpendicular distance to TOLZ is larger. We take
+// the MIN over all sb-vertices for each source — that bottoms out at the
+// true buffer distance regardless of corner style (rounded, mitered,
+// rectangular, hand-drawn).
+//
+// sbRings: [[ [lng,lat], ... ], ...] — outer rings of the parsed safety buffer
+// paOuter, tolzOuter: [[lng,lat], ...] — source-polygon corners (no closing dup)
+function inferBufferDistances(sbRings, paOuter, tolzOuter) {
+  if (!sbRings.length || !paOuter.length || !tolzOuter.length) return {};
+  const sbVerts = sbRings.flatMap(r => r.slice(0, -1));
+  const paLine = turf.lineString([...paOuter, paOuter[0]]);
+  const tolzLine = turf.lineString([...tolzOuter, tolzOuter[0]]);
+  let minPA = Infinity, minTOLZ = Infinity;
+  sbVerts.forEach(v => {
+    const pt = turf.point(v);
+    const dPA = turf.pointToLineDistance(pt, paLine, { units: 'meters' });
+    const dTOLZ = turf.pointToLineDistance(pt, tolzLine, { units: 'meters' });
+    if (dPA < minPA) minPA = dPA;
+    if (dTOLZ < minTOLZ) minTOLZ = dTOLZ;
+  });
+  return {
+    paBufferDist: isFinite(minPA) ? minPA : null,
+    tolzBufferDist: isFinite(minTOLZ) ? minTOLZ : null,
+  };
+}
+
+function importKML(text) {
+  let doc;
+  try {
+    const parser = new DOMParser();
+    doc = parser.parseFromString(text, 'text/xml');
+    const parseErr = doc.getElementsByTagName('parsererror');
+    if (parseErr.length) throw new Error('Invalid XML');
+  } catch (e) {
+    toast('Failed to parse KML file');
+    return;
+  }
+
+  // Find PA, TOLZ, Audience by name
+  const paMarks = findAllPlacemarksByName(doc, 'Performance Area');
+  const tolzMarks = findAllPlacemarksByName(doc, 'TOLZ');
+  const audMark = findPlacemarkByName(doc, 'Audience');
+
+  // Pick the polygon-bearing placemark (one with rings) for PA and TOLZ.
+  // Audience is optional — if missing, we'll synthesize a default location.
+  let paPlacemark = paMarks.find(p => extractPolygonRings(p).length > 0);
+  let tolzPlacemark = tolzMarks.find(p => extractPolygonRings(p).length > 0);
+
+  if (!paPlacemark || !tolzPlacemark) {
+    const found = listAllPlacemarkNames(doc);
+    console.warn('KML import: missing required placemarks. Found:', found);
+    const missing = [];
+    if (!paPlacemark) missing.push('Performance Area');
+    if (!tolzPlacemark) missing.push('TOLZ');
+    const foundList = found.length ? found.slice(0, 6).join(', ') + (found.length > 6 ? '…' : '') : '(none)';
+    toast(`Missing: ${missing.join(', ')}. Found: ${foundList}`);
+    return;
+  }
+
+  const paRings = extractPolygonRings(paPlacemark);
+  const tolzRings = extractPolygonRings(tolzPlacemark);
+  const audPoint = audMark ? extractPoint(audMark) : null;
+  if (!paRings.length || !tolzRings.length) {
+    toast('KML missing PA or TOLZ geometry');
+    return;
+  }
+
+  // Polygon outer rings include duplicated closing vertex; drop it
+  const paOuter = paRings[0].slice(0, -1);
+  const tolzOuter = tolzRings[0].slice(0, -1);
+
+  console.log('KML import:');
+  console.log('  PA placemark name:', paPlacemark.getElementsByTagName('name')[0]?.textContent);
+  console.log('  PA outer corners:', paOuter);
+  console.log('  TOLZ placemark name:', tolzPlacemark.getElementsByTagName('name')[0]?.textContent);
+  console.log('  TOLZ outer corners:', tolzOuter);
+  console.log('  Audience:', audPoint);
+
+  // ---- TOLZ: always treat as rectangle (export always writes 4 corners)
+  const tolzRect = recoverRectangleParams(tolzOuter);
+  if (!tolzRect) {
+    toast('TOLZ polygon does not appear to be a rectangle');
+    return;
+  }
+  state.tolz = { lat: tolzRect.center[1], lng: tolzRect.center[0] };
+  state.tolzLength = Math.round(tolzRect.length);
+  state.tolzWidth = Math.round(tolzRect.width);
+  state.tolzManualRotation = Math.round(tolzRect.bearing);
+  state.tolzRotationMode = 'manual'; // imports come in as manual; user can switch back
+
+  // Parse TOLZ description for cols/rows/separation
+  const tolzDescParsed = parseTolzDescription(extractDescription(tolzPlacemark));
+  if (tolzDescParsed.cols) state.tolzCols = tolzDescParsed.cols;
+  if (tolzDescParsed.rows) state.tolzRows = tolzDescParsed.rows;
+  if (tolzDescParsed.sepX) state.tolzSepX = tolzDescParsed.sepX;
+  if (tolzDescParsed.sepY) state.tolzSepY = tolzDescParsed.sepY;
+
+  // ---- PA: try rectangle, fall back to custom polygon
+  const paRect = paOuter.length === 4 ? recoverRectangleParams(paOuter) : null;
+  if (paRect) {
+    state.paCenter = { lat: paRect.center[1], lng: paRect.center[0] };
+    state.paLength = Math.round(paRect.length);
+    state.paWidth = Math.round(paRect.width);
+    state.manualRotation = Math.round(paRect.bearing);
+    state.rotationMode = 'manual';
+    state.paIsCustom = false;
+    state.paCustomCoords = null;
+  } else {
+    // Custom polygon — use centroid as paCenter, store coords
+    const cLng = paOuter.reduce((s, c) => s + c[0], 0) / paOuter.length;
+    const cLat = paOuter.reduce((s, c) => s + c[1], 0) / paOuter.length;
+    state.paCenter = { lat: cLat, lng: cLng };
+    state.paIsCustom = true;
+    state.paCustomCoords = paOuter.map(c => [c[0], c[1]]);
+    // Length/Width/rotation are no longer meaningful — leave as-is
+  }
+
+  // ---- Safety buffer distances — try the "Safety Buffer" placemark
+  // description first (exact, present in KMLs we exported); fall back to
+  // measuring perpendicular sb-vertex distances to the PA/TOLZ outlines.
+  // Note: exporters typically write two "Safety Buffer" placemarks (a pin
+  // and a polygon). We need the polygon-bearing one for both the description
+  // and the geometry — pick that explicitly.
+  const sbMarks = findAllPlacemarksByName(doc, 'Safety Buffer');
+  const sbMark = sbMarks.find(m => extractPolygonRings(m).length > 0) || sbMarks[0];
+  if (sbMark) {
+    const sbDesc = parseSafetyBufferDescription(extractDescription(sbMark));
+    let paBuf = sbDesc.paBufferDist;
+    let tolzBuf = sbDesc.tolzBufferDist;
+    if (paBuf === undefined || tolzBuf === undefined) {
+      const sbRings = extractPolygonRings(sbMark);
+      if (sbRings.length > 0) {
+        const inferred = inferBufferDistances(sbRings, paOuter, tolzOuter);
+        console.log('Safety buffer inferred distances:', inferred);
+        if (paBuf === undefined && inferred.paBufferDist != null) paBuf = Math.round(inferred.paBufferDist);
+        if (tolzBuf === undefined && inferred.tolzBufferDist != null) tolzBuf = Math.round(inferred.tolzBufferDist);
+      } else {
+        console.log('Safety buffer placemark has no polygon geometry');
+      }
+    }
+    if (paBuf !== undefined) state.paBufferDist = paBuf;
+    if (tolzBuf !== undefined) state.tolzBufferDist = tolzBuf;
+  }
+
+  // Parse PA description for width/depth/height
+  const paDescParsed = parsePaDescription(extractDescription(paPlacemark));
+  if (!state.paIsCustom) {
+    // Description is authoritative source for height; geometry wins on width/depth
+    // but if geometry recovery is uncertain, description fills gaps. In our case
+    // recoverRectangleParams gave us length/width directly so we trust that.
+    if (paDescParsed.height !== undefined) state.paHeight = paDescParsed.height;
+  } else {
+    if (paDescParsed.height !== undefined) state.paHeight = paDescParsed.height;
+  }
+
+  // ---- Audience — use point from KML if present, otherwise synthesize a
+  // default location ~80m to the side of the PA so the user can re-drag it.
+  if (audPoint) {
+    state.audience = { lat: audPoint[1], lng: audPoint[0] };
+  } else {
+    // Place audience along the line from TOLZ-through-PA, on the FAR side of
+    // the PA from TOLZ, ~80m past PA. If TOLZ and PA are on top of each
+    // other, just offset 80m east as a fallback.
+    const paC = state.paCenter;
+    const tolzC = state.tolz;
+    const dLat = paC.lat - tolzC.lat;
+    const dLng = paC.lng - tolzC.lng;
+    const len = Math.sqrt(dLat * dLat + dLng * dLng);
+    if (len > 1e-9) {
+      // ~80m offset; rough scale (1 deg lat ≈ 111km)
+      const offsetDeg = 0.0007;
+      const ux = dLat / len, uy = dLng / len;
+      state.audience = { lat: paC.lat + ux * offsetDeg, lng: paC.lng + uy * offsetDeg };
+    } else {
+      state.audience = { lat: paC.lat, lng: paC.lng + 0.0007 };
+    }
+    console.log('KML import: no Audience placemark found, using default location');
+  }
+
+  // ---- Update DOM inputs to reflect new state
+  document.getElementById('pa-length').value = state.paLength;
+  document.getElementById('pa-width').value = state.paWidth;
+  document.getElementById('pa-height').value = state.paHeight;
+  document.getElementById('tolz-length').value = state.tolzLength;
+  document.getElementById('tolz-width').value = state.tolzWidth;
+  document.getElementById('tolz-cols').value = state.tolzCols;
+  document.getElementById('tolz-rows').value = state.tolzRows;
+  document.getElementById('tolz-sep-x').value = state.tolzSepX;
+  document.getElementById('tolz-sep-y').value = state.tolzSepY;
+  document.getElementById('rotation-slider').value = state.manualRotation;
+  document.getElementById('rotation-input').value = state.manualRotation;
+  document.getElementById('tolz-rotation-slider').value = state.tolzManualRotation;
+  document.getElementById('tolz-rotation-input').value = state.tolzManualRotation;
+  document.getElementById('pa-buffer-dist').value = state.paBufferDist;
+  document.getElementById('tolz-buffer-dist').value = state.tolzBufferDist;
+
+  // Update mode toggles
+  document.querySelectorAll('.toggle-btn[data-pa-mode]').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.toggle-btn[data-pa-mode="${state.rotationMode}"]`).classList.add('active');
+  document.querySelectorAll('.toggle-btn[data-tolz-mode]').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.toggle-btn[data-tolz-mode="${state.tolzRotationMode}"]`).classList.add('active');
+
+  // ---- Ensure markers exist. If user imports before clicking Let's Goooo!,
+  // we need to create markers — but NOT call initFromMapCenter() because
+  // that would overwrite the state we just parsed from the KML.
+  if (!audienceMarker || !paCenterMarker || !tolzCenterMarker) {
+    audienceMarker = L.marker([state.audience.lat, state.audience.lng], { icon: audienceIcon, draggable: true })
+      .bindTooltip('Audience', { permanent: true, direction: 'top', offset: [0, -10], className: 'aud-tt' })
+      .addTo(map);
+    paCenterMarker = L.marker([state.paCenter.lat, state.paCenter.lng], { icon: paCenterIcon, draggable: true })
+      .bindTooltip('PA Center', { permanent: true, direction: 'top', offset: [0, -14], className: 'pa-tt' })
+      .addTo(map);
+    tolzCenterMarker = L.marker([state.tolz.lat, state.tolz.lng], { icon: tolzCenterIcon, draggable: true })
+      .bindTooltip('TOLZ', { permanent: true, direction: 'top', offset: [0, -10], className: 'tolz-tt' })
+      .addTo(map);
+
+    // Wire up drag handlers (same logic as initFromMapCenter)
+    audienceMarker.on('drag', (e) => {
+      const ll = e.target.getLatLng();
+      state.audience = { lat: ll.lat, lng: ll.lng };
+      redraw();
+    });
+    paCenterMarker.on('drag', (e) => {
+      const ll = e.target.getLatLng();
+      if (state.paIsCustom && state.paCustomCoords) {
+        const dLat = ll.lat - state.paCenter.lat;
+        const dLng = ll.lng - state.paCenter.lng;
+        state.paCustomCoords = state.paCustomCoords.map(([lng, lat]) => [lng + dLng, lat + dLat]);
+      }
+      state.paCenter = { lat: ll.lat, lng: ll.lng };
+      redraw();
+    });
+    tolzCenterMarker.on('drag', (e) => {
+      const ll = e.target.getLatLng();
+      state.tolz = { lat: ll.lat, lng: ll.lng };
+      redraw();
+    });
+  }
+
+  // ---- Move existing markers to imported positions
+  audienceMarker.setLatLng([state.audience.lat, state.audience.lng]);
+  paCenterMarker.setLatLng([state.paCenter.lat, state.paCenter.lng]);
+  tolzCenterMarker.setLatLng([state.tolz.lat, state.tolz.lng]);
+
+  updatePAControlsDisabled();
+  rebuildPAHandles();
+  redraw();
+  markTemplatePlaced();
+
+  // Snap map view directly to the imported PA center coordinate.
+  // This is more reliable than fitBounds when the underlying tile state
+  // is far from the imported location.
+  console.log('KML import: setting map view to PA center', state.paCenter.lat, state.paCenter.lng);
+  map.setView([state.paCenter.lat, state.paCenter.lng], 18, { animate: false });
+  // Force map to recalculate its size in case sidebar/layout changed
+  setTimeout(() => map.invalidateSize(), 50);
+
+  const audNote = audPoint ? '' : ' (audience defaulted)';
+  const what = state.paIsCustom ? 'PA (custom polygon), TOLZ, Audience' : 'PA, TOLZ, Audience';
+  toast(`Imported ${what}${audNote}`);
+}
+
+document.getElementById('btn-import').addEventListener('click', () => {
+  document.getElementById('kml-file-input').click();
+});
+
+document.getElementById('kml-file-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const isKMZ = file.name.toLowerCase().endsWith('.kmz');
+
+  try {
+    let kmlText;
+    if (isKMZ) {
+      // KMZ is a zip containing a .kml (usually doc.kml) plus optional resources
+      const arrayBuf = await file.arrayBuffer();
+      const zip = await JSZip.loadAsync(arrayBuf);
+      // Find the first .kml file inside (KMZ spec says doc.kml at root, but be lenient)
+      const kmlEntry = Object.values(zip.files).find(f =>
+        !f.dir && f.name.toLowerCase().endsWith('.kml')
+      );
+      if (!kmlEntry) {
+        toast('KMZ contains no .kml file');
+        return;
+      }
+      kmlText = await kmlEntry.async('text');
+    } else {
+      kmlText = await file.text();
+    }
+    importKML(kmlText);
+  } catch (err) {
+    console.error(err);
+    toast('Failed to read file: ' + (err.message || 'unknown error'));
+  } finally {
+    e.target.value = ''; // reset so re-importing same file fires change
+  }
+});
+
+// ===== toast =====
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  // Longer duration for longer messages so error details can be read
+  const duration = msg.length > 60 ? 6000 : 2200;
+  toastTimer = setTimeout(() => t.classList.remove('show'), duration);
+}
+
+// ===== coordinate search =====
+function parseCoord(input) {
+  // Strip parens, brackets, N/S/E/W letters and degree symbols (decimal degrees only for now)
+  const cleaned = input.replace(/[()\[\]°NSEWnsew]/g, '').trim();
+  const parts = cleaned.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  if (parts.length !== 2) return null;
+  const lat = parseFloat(parts[0]);
+  const lng = parseFloat(parts[1]);
+  if (isNaN(lat) || isNaN(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+
+// Persistent marker for the last searched coordinate
+let searchPinMarker = null;
+const searchPinIcon = L.divIcon({
+  className: 'search-pin-marker',
+  iconSize: [24, 32],
+  // Red teardrop pin SVG, full shape fits viewBox; CSS anchors bottom tip on coord
+  html: `<svg viewBox="0 0 24 32" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 0C5.4 0 0 5.4 0 12c0 8 12 20 12 20s12-12 12-20c0-6.6-5.4-12-12-12z" fill="#ef4444" stroke="#0a0d12" stroke-width="1.5"/>
+    <circle cx="12" cy="12" r="4" fill="#0a0d12"/>
+  </svg>`,
+});
+
+function goCoord() {
+  const val = document.getElementById('coord-input').value;
+  if (!val.trim()) return;
+  const coord = parseCoord(val);
+  if (!coord) {
+    toast('Invalid coordinate. Use format: lat, lng (decimal degrees)');
+    return;
+  }
+  map.setView([coord.lat, coord.lng], 18);
+
+  // Drop or move the search pin to the new coordinate
+  if (searchPinMarker) {
+    searchPinMarker.setLatLng([coord.lat, coord.lng]);
+  } else {
+    searchPinMarker = L.marker([coord.lat, coord.lng], {
+      icon: searchPinIcon,
+      interactive: false,
+      keyboard: false,
+    }).addTo(map);
+  }
+
+  toast(`Moved to ${coord.lat.toFixed(5)}, ${coord.lng.toFixed(5)}`);
+}
+
+document.getElementById('coord-go').addEventListener('click', goCoord);
+document.getElementById('coord-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    goCoord();
+  }
+});
+
+document.getElementById('coord-clear').addEventListener('click', () => {
+  if (searchPinMarker) {
+    map.removeLayer(searchPinMarker);
+    searchPinMarker = null;
+    toast('Search pin cleared');
+  }
+  document.getElementById('coord-input').value = '';
+});
+
+// ===== launch (drop the template at current map view) =====
+document.getElementById('btn-launch').addEventListener('click', () => {
+  initFromMapCenter();
+  state.paIsCustom = false;
+  state.paCustomCoords = null;
+  updatePAControlsDisabled();
+  rebuildPAHandles();
+  redraw();
+  markTemplatePlaced();
+  toast('Template dropped — start editing!');
+});
+
+// ===== geofence handlers =====
+function updateGeofenceUIState() {
+  document.getElementById('primary-geofence-inputs').classList.toggle('enabled', state.primaryGfEnabled);
+  document.getElementById('secondary-geofence-inputs').classList.toggle('enabled', state.secondaryGfEnabled);
+}
+
+document.getElementById('primary-geofence-enabled').addEventListener('change', (e) => {
+  state.primaryGfEnabled = e.target.checked;
+  updateGeofenceUIState();
+  redraw();
+});
+document.getElementById('secondary-geofence-enabled').addEventListener('change', (e) => {
+  state.secondaryGfEnabled = e.target.checked;
+  updateGeofenceUIState();
+  redraw();
+});
+
+function setOrigin(latLng) {
+  state.origin = { lat: latLng.lat, lng: latLng.lng };
+
+  // Create or update marker
+  if (originMarker) {
+    originMarker.setLatLng([latLng.lat, latLng.lng]);
+  } else {
+    originMarker = L.marker([latLng.lat, latLng.lng], {
+      icon: originIcon,
+      draggable: true,
+    })
+      .bindTooltip('Origin', { permanent: true, direction: 'top', offset: [0, -10], className: 'aud-tt' })
+      .addTo(map);
+
+    originMarker.on('drag', (e) => {
+      const ll = e.target.getLatLng();
+      state.origin = { lat: ll.lat, lng: ll.lng };
+      // Reflect in input
+      document.getElementById('origin-input').value = `${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`;
+      redraw();
+    });
+  }
+
+  // Reflect in input
+  document.getElementById('origin-input').value = `${latLng.lat.toFixed(6)}, ${latLng.lng.toFixed(6)}`;
+  redraw();
+}
+
+document.getElementById('origin-input').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const coord = parseCoord(e.target.value);
+  if (!coord) {
+    toast('Invalid coordinate. Use format: lat, lng');
+    return;
+  }
+  setOrigin({ lat: coord.lat, lng: coord.lng });
+  map.panTo([coord.lat, coord.lng]);
+});
+
+// ===== sidebar toggle =====
+const appEl = document.getElementById('app');
+const sidebarToggleBtn = document.getElementById('btn-sidebar-toggle');
+
+function setSidebarCollapsed(collapsed) {
+  appEl.classList.toggle('sidebar-collapsed', collapsed);
+  // Leaflet needs to recompute its size after the container changes width
+  setTimeout(() => map.invalidateSize(), 280);
+}
+
+sidebarToggleBtn.addEventListener('click', () => {
+  setSidebarCollapsed(!appEl.classList.contains('sidebar-collapsed'));
+});
+
+// Auto-collapse sidebar on narrow screens (phones, small tablets in portrait)
+if (window.innerWidth < 768) {
+  setSidebarCollapsed(true);
+}
+
+// ===== boot =====
+// Map is loaded at the default coords; nothing is drawn until the user
+// clicks "Let's Goooo!" — they can search and pan to verify the venue first.
+
+// Fix any tooltip styling
+const style = document.createElement('style');
+style.textContent = `
+  .leaflet-tooltip {
+    background: rgba(10, 13, 18, 0.85);
+    border: 1px solid var(--line);
+    color: var(--text-0);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    padding: 2px 6px;
+    box-shadow: none;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border-radius: 3px;
+  }
+  .leaflet-tooltip:before { display: none; }
+  .aud-tt { color: #fbbf24; }
+  .pa-tt { color: #ff7a45; }
+  .tolz-tt { color: #a020f0; }
+`;
+document.head.appendChild(style);
+</script>
+</body>
+</html>
